@@ -61,6 +61,15 @@ class Machine(models.Model):
             self.license_key = generate_unique_license_key(Machine)
         super().save(*args, **kwargs)
 
+    @property
+    def is_monitoring_unlocked(self):
+        """
+        Display-only logic for STEP 2.2's dashboard badge — NOT the real box check-in system
+        (that's STEP 2.4/2.5). True only when the machine has time left AND its most recent
+        top-up was a 300-day or 1000-day bundle. A later top-up with a smaller bundle re-locks it.
+        """
+        return self.days_remaining > 0 and self.last_topup_bundle_type in ("300day", "1000day")
+
     def __str__(self):
         return f"{self.nickname or self.license_key} ({self.owner.phone_number})"
 
