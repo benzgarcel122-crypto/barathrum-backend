@@ -1,0 +1,60 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ machine.nickname|default:machine.license_key }} — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>{{ machine.nickname|default:machine.license_key }}</h1>
+  <a href="{% url 'dashboard:topup' machine.id %}" class="btn btn-sm">Top Up</a>
+</div>
+
+<div class="card">
+  <div class="days-remaining days-{{ color }}">{{ machine.days_remaining }}</div>
+  <div class="days-label">days remaining</div>
+
+  {% if machine.is_monitoring_unlocked %}
+    <span class="badge badge-unlocked">🔓 Monitoring unlocked</span>
+  {% else %}
+    <span class="badge badge-locked">🔒 Monitoring locked</span>
+    <span class="badge-reason">Top up with a 300+ day bundle to unlock monitoring</span>
+  {% endif %}
+
+  <table style="width:100%; margin-top:16px; font-size:0.9rem; border-collapse: collapse;">
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">License key</td>
+      <td style="text-align:right; font-family: monospace;">{{ machine.license_key }}</td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Last top-up bundle</td>
+      <td style="text-align:right;">{{ machine.get_last_topup_bundle_type_display|default:"—" }}</td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Status</td>
+      <td style="text-align:right;">
+        {% if machine.last_checkin_at %}Last seen {{ machine.last_checkin_at }}{% else %}Never connected{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Added</td>
+      <td style="text-align:right;">{{ machine.created_at }}</td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="font-size:1rem; margin-top:0;">Top-up history</h2>
+  {% if transactions %}
+    <table style="width:100%; font-size:0.88rem; border-collapse: collapse;">
+      {% for t in transactions %}
+      <tr style="border-top:1px solid var(--color-border);">
+        <td style="padding:8px 0;">{{ t.get_bundle_type_display }}</td>
+        <td style="padding:8px 0; text-align:center;">+{{ t.days_added }} days</td>
+        <td style="padding:8px 0; text-align:right;">₱{{ t.amount_paid_pesos }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="text-muted">No top-ups yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
