@@ -1,0 +1,51 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Top Up — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Top up {{ machine.nickname|default:machine.license_key }}</h1>
+</div>
+
+<div class="tabs">
+  <a href="?tab=bundles" class="{% if tab != 'custom' %}active{% endif %}">Bundles</a>
+  <a href="?tab=custom" class="{% if tab == 'custom' %}active{% endif %}">Custom</a>
+</div>
+
+{% if tab == 'custom' %}
+<div class="card" style="max-width: 420px;">
+  <form method="post" action="{% url 'dashboard:topup' machine.id %}">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="custom">
+    <div class="field">
+      <label for="id_custom_days">Number of days</label>
+      <input type="number" id="id_custom_days" name="custom_days" min="1" step="1"
+             oninput="document.getElementById('custom-total').textContent = (parseInt(this.value)||0) * {{ custom_price_per_day }};">
+      <div class="field-hint">₱{{ custom_price_per_day }} per day</div>
+    </div>
+    <p>Total: <strong>₱<span id="custom-total">0</span></strong></p>
+    <button type="submit" class="btn btn-block">Confirm Top Up</button>
+  </form>
+</div>
+{% else %}
+<div class="card" style="max-width: 420px;">
+  <form method="post" action="{% url 'dashboard:topup' machine.id %}">
+    {% csrf_token %}
+    <input type="hidden" name="mode" value="bundle">
+    {% for b in bundles %}
+    <label class="bundle-option">
+      <span>
+        <input type="radio" name="bundle_type" value="{{ b.bundle_type }}" {% if forloop.first %}checked{% endif %}>
+        <span class="bundle-name">{{ b.label }}</span>
+        <span class="bundle-price">— ₱{{ b.price }} ({{ b.pct_off }}% off)</span>
+        {% if b.unlocks_monitoring %}
+          <span class="bundle-discount">🔓 Unlocks Monitoring</span>
+        {% endif %}
+      </span>
+    </label>
+    {% endfor %}
+    <button type="submit" class="btn btn-block mt-16">Confirm Top Up</button>
+  </form>
+</div>
+{% endif %}
+
+{% endblock %}
