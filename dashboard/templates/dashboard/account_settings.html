@@ -1,0 +1,21 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Account — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Account settings</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <div class="field">
+    <label>Phone number</label>
+    <input type="text" value="{{ request.user.phone_number }}" disabled>
+  </div>
+  <div class="field">
+    <label>Display name</label>
+    <input type="text" value="{{ request.user.display_name }}" disabled>
+  </div>
+  <p class="field-hint">Editing account details isn't available yet.</p>
+</div>
+
+{% endblock %}
