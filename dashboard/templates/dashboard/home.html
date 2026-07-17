@@ -1,0 +1,112 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Dashboard — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Your machines</h1>
+  <a href="{% url 'dashboard:add_machine' %}" class="btn btn-sm">+ Add Machine</a>
+</div>
+
+{% if not cards %}
+  <div class="empty-state card">
+    <div class="empty-icon">📡</div>
+    <p><strong>No machines yet.</strong></p>
+    <p>Add your first pisowifi machine to start tracking its balance.</p>
+    <a href="{% url 'dashboard:add_machine' %}" class="btn mt-16">+ Add Machine</a>
+  </div>
+{% else %}
+
+  {% if any_needs_topup %}
+  <div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+    <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+      <input type="checkbox" id="select-all-toggle">
+      Select all that need a top-up
+    </label>
+    <span id="selected-count" class="text-muted">0 selected</span>
+  </div>
+  {% endif %}
+
+  <form id="bulk-topup-form" method="get" action="{% url 'dashboard:bulk_topup' %}">
+    {% for c in cards %}
+    <div class="card machine-card">
+      {% if c.needs_topup %}
+        <input type="checkbox" class="machine-select" name="machine_id" value="{{ c.machine.id }}"
+               data-needs-topup="1">
+      {% else %}
+        <input type="checkbox" disabled title="This machine doesn't need a top-up yet">
+      {% endif %}
+      <div class="machine-info">
+        <p class="machine-nickname">
+          <a href="{% url 'dashboard:machine_detail' c.machine.id %}">
+            {{ c.machine.nickname|default:c.machine.license_key }}
+          </a>
+        </p>
+        <div class="days-remaining days-{{ c.color }}">{{ c.machine.days_remaining }}</div>
+        <div class="days-label">days remaining</div>
+
+        {% if c.machine.is_monitoring_unlocked %}
+          <span class="badge badge-unlocked">🔓 Monitoring unlocked</span>
+        {% else %}
+          <span class="badge badge-locked">🔒 Monitoring locked</span>
+          <span class="badge-reason">Top up with a 300+ day bundle to unlock monitoring</span>
+        {% endif %}
+
+        <p class="text-muted" style="font-size:0.8rem; margin: 8px 0 0;">
+          {% if c.machine.last_checkin_at %}
+            Last seen {{ c.machine.last_checkin_at }}
+          {% else %}
+            Never connected
+          {% endif %}
+        </p>
+
+        <div class="machine-actions">
+          <a href="{% url 'dashboard:topup' c.machine.id %}" class="btn btn-sm">Top Up</a>
+          <a href="{% url 'dashboard:machine_detail' c.machine.id %}" class="btn btn-sm btn-secondary">Details</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if any_needs_topup %}
+    <div class="batch-bar" id="batch-bar" style="display:none;">
+      <span><span class="batch-total" id="batch-total">0</span> selected</span>
+      <button type="submit" id="bulk-topup-submit" class="btn btn-sm" style="background:#fff; color: var(--color-accent-dark);">
+        Top Up Selected
+      </button>
+    </div>
+    {% endif %}
+  </form>
+{% endif %}
+
+<script>
+(function () {
+  var selectAll = document.getElementById('select-all-toggle');
+  var checkboxes = Array.prototype.slice.call(document.querySelectorAll('.machine-select'));
+  var countLabel = document.getElementById('selected-count');
+  var batchBar = document.getElementById('batch-bar');
+  var batchTotal = document.getElementById('batch-total');
+
+  function updateCount() {
+    var selected = checkboxes.filter(function (cb) { return cb.checked; });
+    var n = selected.length;
+    if (countLabel) countLabel.textContent = n + ' selected';
+    if (batchTotal) batchTotal.textContent = n;
+    if (batchBar) batchBar.style.display = n > 0 ? 'flex' : 'none';
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      checkboxes.forEach(function (cb) { cb.checked = selectAll.checked; });
+      updateCount();
+    });
+  }
+  checkboxes.forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      if (selectAll && !cb.checked) selectAll.checked = false;
+      updateCount();
+    });
+  });
+  updateCount();
+})();
+</script>
+{% endblock %}
