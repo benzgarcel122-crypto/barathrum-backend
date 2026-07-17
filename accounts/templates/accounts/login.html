@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Log in — Barathrum{% endblock %}
+{% block content %}
+<div class="card" style="max-width: 380px; margin: 40px auto 0;">
+  <h1 style="font-size:1.2rem; margin-top:0;">Log in to Barathrum</h1>
+  <p class="text-muted">We'll send a one-time code to your registered phone number.</p>
+
+  <form method="post" action="{% url 'login' %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_phone_number">Phone number</label>
+      <input type="tel" id="id_phone_number" name="phone_number" placeholder="09XXXXXXXXX"
+             value="{{ form_values.phone_number|default:'' }}" required>
+      {% if form_errors.phone_number %}<div class="field-error">{{ form_errors.phone_number }}</div>{% endif %}
+    </div>
+    {% if form_errors.non_field %}<div class="field-error mb-16">{{ form_errors.non_field }}</div>{% endif %}
+    <button type="submit" class="btn btn-block">Send code</button>
+  </form>
+
+  <p class="text-muted mt-16" style="text-align:center;">
+    New to Barathrum? <a href="{% url 'signup' %}">Create an account</a>
+  </p>
+</div>
+{% endblock %}
