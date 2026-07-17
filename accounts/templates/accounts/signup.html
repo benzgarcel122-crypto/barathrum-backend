@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Sign up — Barathrum{% endblock %}
+{% block content %}
+<div class="card" style="max-width: 380px; margin: 40px auto 0;">
+  <h1 style="font-size:1.2rem; margin-top:0;">Create your Barathrum account</h1>
+  <p class="text-muted">We'll send a one-time code to your phone number to confirm it's you.</p>
+
+  <form method="post" action="{% url 'signup' %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_phone_number">Phone number</label>
+      <input type="tel" id="id_phone_number" name="phone_number" placeholder="09XXXXXXXXX"
+             value="{{ form_values.phone_number|default:'' }}" required>
+      {% if form_errors.phone_number %}<div class="field-error">{{ form_errors.phone_number }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="id_display_name">Your name</label>
+      <input type="text" id="id_display_name" name="display_name" placeholder="e.g. Juan Dela Cruz"
+             value="{{ form_values.display_name|default:'' }}" required>
+    </div>
+    {% if form_errors.non_field %}<div class="field-error mb-16">{{ form_errors.non_field }}</div>{% endif %}
+    <button type="submit" class="btn btn-block">Send code</button>
+  </form>
+
+  <p class="text-muted mt-16" style="text-align:center;">
+    Already have an account? <a href="{% url 'login' %}">Log in</a>
+  </p>
+</div>
+{% endblock %}
