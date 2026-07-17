@@ -1,0 +1,60 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Bulk Top Up — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Bulk top up ({{ machines|length }} machines)</h1>
+</div>
+
+<form method="post" action="{% url 'dashboard:bulk_topup' %}" id="bulk-form">
+  {% csrf_token %}
+  {% for machine in machines %}
+    <input type="hidden" name="machine_id" value="{{ machine.id }}">
+  {% endfor %}
+
+  {% for machine in machines %}
+  <div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div>
+      <p style="margin:0; font-weight:600;">{{ machine.nickname|default:machine.license_key }}</p>
+      <p class="text-muted" style="margin:0; font-size:0.85rem;">{{ machine.days_remaining }} days remaining</p>
+    </div>
+    <select name="bundle_{{ machine.id }}" class="bundle-select" data-machine="{{ machine.id }}" style="width:auto;">
+      {% for b in bundles %}
+        <option value="{{ b.bundle_type }}" data-price="{{ b.price }}">
+          {{ b.label }} — ₱{{ b.price }}{% if b.unlocks_monitoring %} 🔓{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endfor %}
+
+  <div class="batch-bar" style="position: static;">
+    <span>Total: <span class="batch-total" id="bulk-total">₱0</span></span>
+    <button type="submit" class="btn btn-sm" style="background:#fff; color: var(--color-accent-dark);">
+      Confirm Top Up for All
+    </button>
+  </div>
+</form>
+
+<script>
+(function () {
+  var selects = Array.prototype.slice.call(document.querySelectorAll('.bundle-select'));
+  var totalEl = document.getElementById('bulk-total');
+
+  function updateTotal() {
+    var total = 0;
+    selects.forEach(function (sel) {
+      var opt = sel.options[sel.selectedIndex];
+      total += parseFloat(opt.getAttribute('data-price')) || 0;
+    });
+    totalEl.textContent = '₱' + total;
+  }
+
+  selects.forEach(function (sel) {
+    sel.addEventListener('change', updateTotal);
+  });
+  updateTotal();
+})();
+</script>
+
+{% endblock %}
