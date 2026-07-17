@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block nav %}
+<nav class="app-nav">
+  <span class="sidebar-brand">Barathrum</span>
+  <a href="{% url 'dashboard:home' %}" class="{% if active_nav == 'dashboard' %}active{% endif %}">
+    <span class="nav-icon">🏠</span><span>Dashboard</span>
+  </a>
+  <a href="{% url 'dashboard:add_machine' %}" class="{% if active_nav == 'add_machine' %}active{% endif %}">
+    <span class="nav-icon">➕</span><span>Add Machine</span>
+  </a>
+  <a href="{% url 'dashboard:account_settings' %}" class="{% if active_nav == 'account' %}active{% endif %}">
+    <span class="nav-icon">👤</span><span>Account</span>
+  </a>
+</nav>
+{% endblock %}
