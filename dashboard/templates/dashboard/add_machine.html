@@ -1,0 +1,22 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Add Machine — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Add a machine</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">A license key will be generated automatically once you add the machine.</p>
+  <form method="post" action="{% url 'dashboard:add_machine' %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_nickname">Nickname (optional)</label>
+      <input type="text" id="id_nickname" name="nickname" placeholder="e.g. Sari-Sari Store — Corner Unit">
+      <div class="field-hint">Helps you tell machines apart on the dashboard. You can change this later.</div>
+    </div>
+    <button type="submit" class="btn btn-block">Add Machine</button>
+  </form>
+</div>
+
+{% endblock %}
