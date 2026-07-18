@@ -48,6 +48,25 @@ _env_allowed_hosts = [
 ]
 ALLOWED_HOSTS = list({'localhost', '127.0.0.1', 'testserver', *_env_allowed_hosts})
 
+# Comma-separated list from env (e.g. "https://barathrum.example.com"), with the current Railway
+# domain as a safe fallback so this doesn't need a Variable set just to keep working today.
+# CSRF_TRUSTED_ORIGINS entries must include the scheme (https://) — that's a Django requirement,
+# unlike ALLOWED_HOSTS above which is bare hostnames only.
+_env_csrf_trusted_origins = [
+    o.strip() for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()
+]
+CSRF_TRUSTED_ORIGINS = list({
+    'https://barathrum-backend-production.up.railway.app',
+    *_env_csrf_trusted_origins,
+})
+
+# Railway's proxy terminates HTTPS and forwards to the app over plain HTTP internally, adding an
+# X-Forwarded-Proto header with the original scheme. Without this, Django sees every request as
+# plain HTTP and incorrectly rejects CSRF-protected POSTs (e.g. /admin/ login) that actually came
+# in over HTTPS. Safe locally too: `manage.py runserver` doesn't send this header, so local dev
+# is unaffected either way.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 
 # Application definition
 
