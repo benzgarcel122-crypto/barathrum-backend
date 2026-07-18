@@ -10,7 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+import dj_database_url
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,12 +23,30 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-r(ev&oy(4b^$3dzoc2r(hrhhsljr=atpcnyy@j+4mgp=6rk!ae'
+# Falls back to the original dev-only key so `manage.py runserver` keeps working locally with no
+# environment variables set. Railway MUST have a real SECRET_KEY set in its Variables tab —
+# see the deployment report for the exact value to generate/set.
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY', 'django-insecure-r(ev&oy(4b^$3dzoc2r(hrhhsljr=atpcnyy@j+4mgp=6rk!ae'
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+#
+# Careful parsing note: os.environ.get() returns a *string*, and bool("False") is True in
+# Python (any non-empty string is truthy). Naively doing `bool(os.environ.get('DEBUG', True))`
+# would leave production in DEBUG=True the moment DEBUG=False is set as a literal string, which
+# is exactly backwards from what we want. We explicitly compare against a known "truthy string"
+# set instead, and default to 'True' only for local dev (i.e. only when the env var is entirely
+# absent, e.g. running `manage.py runserver` on a laptop) — if DEBUG is set to anything in the
+# environment, it must be one of these exact strings to be treated as True.
+DEBUG = os.environ.get('DEBUG', 'True').strip().lower() in ('true', '1', 'yes', 'on')
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
+# Comma-separated list from env (e.g. "barathrum.up.railway.app,barathrum.example.com"), plus
+# localhost/127.0.0.1/testserver kept for local dev and the Django test client regardless of env.
+_env_allowed_hosts = [
+    h.strip() for h in os.environ.get('ALLOWED_HOSTS', '').split(',') if h.strip()
+]
+ALLOWED_HOSTS = list({'localhost', '127.0.0.1', 'testserver', *_env_allowed_hosts})
 
 
 # Application definition
@@ -47,6 +68,7 @@ LOGIN_URL = '/login/'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -78,16 +100,15 @@ WSGI_APPLICATION = 'barathrum_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 #
-# FLAGGED (not explicitly asked in this task's scope): the locked tech stack specifies Postgres
-# for the cloud backend. This sandbox has no Postgres server to test against, so SQLite is used
-# here to keep "migrations run cleanly on a fresh database" testable right now. Swapping the
-# ENGINE/NAME to Postgres before any real deploy is a follow-up item, not done in this task.
+# Railway auto-provides DATABASE_URL once a Postgres add-on is attached — nothing to set manually
+# for that one. Falls back to the original SQLite config when DATABASE_URL is absent, so local
+# dev (`manage.py runserver` with no env vars) is completely unchanged from STEP 2.1/2.2.
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+    )
 }
 
 
@@ -127,6 +148,19 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Whitenoise serves static files directly from the app process in production (Railway has no
+# separate static-file server/CDN wired up). CompressedManifestStaticFilesStorage adds
+# content-hashed filenames + gzip/brotli compression so browsers can cache aggressively.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
