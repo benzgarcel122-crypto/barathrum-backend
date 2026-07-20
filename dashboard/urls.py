@@ -10,5 +10,7 @@ urlpatterns = [
     path("machines/bulk-topup/", views.bulk_topup_view, name="bulk_topup"),
     path("machines/<int:machine_id>/", views.machine_detail_view, name="machine_detail"),
     path("machines/<int:machine_id>/topup/", views.topup_view, name="topup"),
+    path("payments/return/", views.payment_return_view, name="payment_return"),
+    path("payments/cancel/", views.payment_cancel_view, name="payment_cancel"),
     path("account/", views.account_settings_view, name="account_settings"),
 ]
