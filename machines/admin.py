@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Machine, Transaction
+from .models import Machine, Payment, Transaction
 
 
 class TransactionInline(admin.TabularInline):
@@ -32,3 +32,14 @@ class TransactionAdmin(admin.ModelAdmin):
     list_filter = ["bundle_type"]
     search_fields = ["machine__license_key"]
     readonly_fields = ["created_at"]
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = [
+        "id", "machine", "bundle_type", "days", "amount_pesos", "status",
+        "paymongo_checkout_session_id", "created_at", "paid_at",
+    ]
+    list_filter = ["status", "bundle_type"]
+    search_fields = ["machine__license_key", "paymongo_checkout_session_id"]
+    readonly_fields = ["created_at", "paid_at"]
