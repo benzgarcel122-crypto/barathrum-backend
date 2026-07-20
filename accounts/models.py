@@ -1,5 +1,5 @@
-import random
 import re
+import secrets
 from datetime import timedelta
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
@@ -108,6 +108,13 @@ class OTPCode(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(default=default_otp_expiry)
     used = models.BooleanField(default=False)
+    # STEP 2.3 security fix: counts failed verification attempts against THIS OTP specifically —
+    # not a per-account or per-phone-number lockout. A fresh OTPCode (e.g. a new login/signup
+    # attempt) starts its own counter at 0, so this only throttles brute-forcing one still-valid
+    # code, never locks the account/phone number itself out of requesting a new one.
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+
+    MAX_FAILED_ATTEMPTS = 5
 
     class Meta:
         indexes = [models.Index(fields=["phone_number", "code", "used"])]
@@ -116,11 +123,19 @@ class OTPCode(models.Model):
         return f"OTP for {self.phone_number} (used={self.used})"
 
     def is_valid(self):
-        return not self.used and timezone.now() < self.expires_at
+        return (
+            not self.used
+            and timezone.now() < self.expires_at
+            and self.failed_attempts < self.MAX_FAILED_ATTEMPTS
+        )
 
     @staticmethod
     def generate_code():
-        return f"{random.randint(0, 999999):06d}"
+        # STEP 2.3 security fix: `random` is not cryptographically secure (its output is
+        # predictable if an attacker recovers/guesses internal state), which matters here since
+        # this code gates account access. Switched to `secrets`, consistent with how
+        # Machine.license_key already uses secrets.choice for the same reason.
+        return f"{secrets.randbelow(1_000_000):06d}"
 
     @classmethod
     def issue(cls, phone_number):
