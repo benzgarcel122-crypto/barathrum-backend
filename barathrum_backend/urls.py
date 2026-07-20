@@ -18,11 +18,13 @@ from django.contrib import admin
 from django.urls import include, path
 
 from accounts import views as accounts_views
+from machines.webhooks import paymongo_webhook_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('signup/', accounts_views.signup_view, name='signup'),
     path('verify/', accounts_views.verify_view, name='verify'),
     path('login/', accounts_views.login_view, name='login'),
+    path('webhooks/paymongo/', paymongo_webhook_view, name='paymongo_webhook'),
     path('', include('dashboard.urls')),
 ]
