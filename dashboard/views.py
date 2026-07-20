@@ -4,9 +4,12 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
-from machines.models import BUNDLE_TYPE_CHOICES, Machine, Transaction
+from machines import paymongo_client
+from machines.models import BUNDLE_TYPE_CHOICES, Machine, Payment
+from machines.paymongo_client import PayMongoAPIError
 
 # Bundle pricing, per the locked design in the STEP 2.2 task:
 #   bundle_type -> (days, price_pesos)
@@ -64,6 +67,50 @@ def _machine_card_context(machine):
         "color": _status_color(machine.days_remaining),
         "needs_topup": machine.days_remaining <= NEEDS_TOPUP_THRESHOLD_DAYS,
     }
+
+
+_BUNDLE_LABELS = dict(BUNDLE_TYPE_CHOICES)
+
+
+def _initiate_paymongo_checkout(payments, request):
+    """
+    Create a single PayMongo Checkout Session covering every Payment in `payments` (one machine
+    each). Stamps the resulting session id onto every Payment row so the webhook can find them
+    all later, and returns the checkout_url to redirect the operator to.
+
+    Raises PayMongoAPIError on any failure -- callers are responsible for marking the Payment(s)
+    as "failed" and showing the operator an error; this function does not touch Payment.status.
+    """
+    line_items = [
+        {
+            "currency": "PHP",
+            "amount": int(p.amount_pesos * 100),  # PayMongo amounts are centavos, not pesos
+            "name": f"{p.machine.nickname or p.machine.license_key} — "
+                     f"{_BUNDLE_LABELS.get(p.bundle_type, p.bundle_type)}",
+            "quantity": 1,
+        }
+        for p in payments
+    ]
+    payment_ids_param = ",".join(str(p.id) for p in payments)
+
+    session_id, checkout_url = paymongo_client.create_checkout_session(
+        line_items=line_items,
+        payment_method_types=["gcash", "paymaya"],
+        success_url=request.build_absolute_uri(
+            reverse("dashboard:payment_return") + f"?payment_ids={payment_ids_param}"
+        ),
+        cancel_url=request.build_absolute_uri(
+            reverse("dashboard:payment_cancel") + f"?payment_ids={payment_ids_param}"
+        ),
+        reference_number=payment_ids_param,
+        description=f"Barathrum top-up — {len(payments)} machine(s)",
+    )
+
+    for payment in payments:
+        payment.paymongo_checkout_session_id = session_id
+        payment.save(update_fields=["paymongo_checkout_session_id"])
+
+    return checkout_url
 
 
 @login_required
@@ -157,24 +204,23 @@ def topup_view(request, machine_id):
         messages.error(request, "Choose a bundle or a custom number of days.")
         return redirect("dashboard:topup", machine_id=machine.id)
 
-    # STUBBED payment: no real GCash/PayMaya call — this is instant/always-successful per STEP 2.2 scope.
-    with db_transaction.atomic():
-        machine.days_remaining += days_added
-        machine.last_topup_bundle_type = bundle_type
-        machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
-        Transaction.objects.create(
-            machine=machine,
-            bundle_type=bundle_type,
-            days_added=days_added,
-            amount_paid_pesos=amount_paid,
-        )
-
-    messages.success(
-        request,
-        f"Topped up {machine.nickname or machine.license_key} with {days_added} days "
-        f"(₱{amount_paid}).",
+    # STEP 2.3: no longer instant/stubbed. Lock the bundle/days/amount into a Payment row FIRST
+    # (server-side, before any redirect), then hand off to PayMongo. days_remaining is only ever
+    # incremented later, by the webhook, once PayMongo confirms the payment actually succeeded.
+    payment = Payment.objects.create(
+        machine=machine, bundle_type=bundle_type, days=days_added, amount_pesos=amount_paid,
+        status="pending",
     )
-    return redirect("dashboard:home")
+
+    try:
+        checkout_url = _initiate_paymongo_checkout([payment], request)
+    except PayMongoAPIError as exc:
+        payment.status = "failed"
+        payment.save(update_fields=["status"])
+        messages.error(request, f"Couldn't start the payment: {exc}")
+        return redirect("dashboard:topup", machine_id=machine.id)
+
+    return redirect(checkout_url)
 
 
 @login_required
@@ -217,25 +263,61 @@ def bulk_topup_view(request):
             return redirect(f"/machines/bulk-topup/?ids={ids_param}")
         updates.append((machine, bundle_type, info["days"], info["price"]))
 
-    total_days = sum(u[2] for u in updates)
-    total_amount = sum(u[3] for u in updates)
-
+    # STEP 2.3: create one Payment per machine, all locked in server-side before any redirect --
+    # see the Payment model docstring for why bulk top-up uses one-Payment-per-machine sharing a
+    # single PayMongo checkout session, rather than a separate batch table.
     with db_transaction.atomic():
-        for machine, bundle_type, days_added, amount_paid in updates:
-            machine.days_remaining += days_added
-            machine.last_topup_bundle_type = bundle_type
-            machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
-            Transaction.objects.create(
-                machine=machine,
-                bundle_type=bundle_type,
-                days_added=days_added,
-                amount_paid_pesos=amount_paid,
+        payments = [
+            Payment.objects.create(
+                machine=machine, bundle_type=bundle_type, days=days_added, amount_pesos=amount_paid,
+                status="pending",
             )
+            for machine, bundle_type, days_added, amount_paid in updates
+        ]
 
-    messages.success(
-        request,
-        f"Topped up {len(updates)} machines — {total_days} days total (₱{total_amount}).",
-    )
+    try:
+        checkout_url = _initiate_paymongo_checkout(payments, request)
+    except PayMongoAPIError as exc:
+        for payment in payments:
+            payment.status = "failed"
+            payment.save(update_fields=["status"])
+        messages.error(request, f"Couldn't start the payment: {exc}")
+        return redirect(f"/machines/bulk-topup/?ids={ids_param}")
+
+    return redirect(checkout_url)
+
+
+@login_required
+def payment_return_view(request):
+    """
+    Landing page after the operator completes payment on PayMongo's hosted checkout and gets
+    redirected back. This does NOT apply the top-up -- that only ever happens from the webhook,
+    since redirects aren't guaranteed to fire (closed tab, network blip, etc). This is purely a
+    "we're confirming this" message; the dashboard will show the updated balance once the
+    webhook has actually landed, which is typically near-instant but not synchronous with this
+    redirect.
+    """
+    payment_ids = [int(i) for i in request.GET.get("payment_ids", "").split(",") if i.isdigit()]
+    matched = Payment.objects.filter(id__in=payment_ids, machine__owner=request.user).count()
+    if matched:
+        messages.info(
+            request,
+            "Payment received — confirming now. Your balance will update automatically in a "
+            "few seconds once PayMongo confirms it.",
+        )
+    else:
+        messages.info(request, "Payment step complete.")
+    return redirect("dashboard:home")
+
+
+@login_required
+def payment_cancel_view(request):
+    """Operator backed out of PayMongo's checkout page. Mark any still-pending Payments failed."""
+    payment_ids = [int(i) for i in request.GET.get("payment_ids", "").split(",") if i.isdigit()]
+    Payment.objects.filter(
+        id__in=payment_ids, machine__owner=request.user, status="pending"
+    ).update(status="failed")
+    messages.error(request, "Payment was cancelled. No changes were made to your balance.")
     return redirect("dashboard:home")
 
 
