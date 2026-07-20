@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth import login as django_login
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from .models import Account, OTPCode, normalize_phone_number
@@ -132,13 +133,17 @@ def verify_view(request):
             status=400,
         )
 
-    otp = (
-        OTPCode.objects.filter(phone_number=phone_number, code=code, used=False)
+    # STEP 2.3 security fix: look up the PENDING otp by phone_number alone first (not
+    # phone_number+code together). This matters because a wrong-code guess won't match any row
+    # if we filter by code too -- we need a row to attach the failed_attempts counter to even
+    # when the submitted code is wrong, otherwise brute-forcing is unthrottled by construction.
+    pending_otp = (
+        OTPCode.objects.filter(phone_number=phone_number, used=False)
         .order_by("-created_at")
         .first()
     )
 
-    if otp is None or not otp.is_valid():
+    if pending_otp is None or timezone.now() >= pending_otp.expires_at:
         error_msg = "Invalid or expired code."
         if wants_json:
             return JsonResponse({"error": error_msg}, status=400)
@@ -149,6 +154,31 @@ def verify_view(request):
             status=400,
         )
 
+    if pending_otp.failed_attempts >= OTPCode.MAX_FAILED_ATTEMPTS:
+        error_msg = "Too many incorrect attempts. Request a new code."
+        if wants_json:
+            return JsonResponse({"error": error_msg}, status=429)
+        return render(
+            request,
+            "accounts/verify.html",
+            {"phone_number": phone_number, "form_errors": {"code": error_msg}},
+            status=429,
+        )
+
+    if pending_otp.code != code:
+        pending_otp.failed_attempts += 1
+        pending_otp.save(update_fields=["failed_attempts"])
+        error_msg = "Invalid or expired code."
+        if wants_json:
+            return JsonResponse({"error": error_msg}, status=400)
+        return render(
+            request,
+            "accounts/verify.html",
+            {"phone_number": phone_number, "form_errors": {"code": error_msg}},
+            status=400,
+        )
+
+    otp = pending_otp
     otp.used = True
     otp.save(update_fields=["used"])
 
