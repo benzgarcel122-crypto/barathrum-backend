@@ -97,35 +97,24 @@ PAYMENT_STATUS_CHOICES = [
 
 class Payment(models.Model):
     """
-    A single PayMongo checkout attempt for one Machine's top-up.
+    STEP 2.4: a wallet-funding transaction via PayMongo. Funding the wallet is flat 1:1
+    (1 peso paid = 1 balance_points credited) -- this Payment model no longer represents a
+    specific machine/bundle purchase at all. Per-machine top-ups are now a fully-internal step
+    (deduct Account.balance_points, no external call) handled in dashboard/views.py.
 
-    STEP 2.3: this replaces instantly trusting the client's POST data. bundle_type/days/
-    amount_pesos are locked in here, server-side, at the moment the operator confirms a top-up
-    choice -- BEFORE any redirect to PayMongo. The webhook handler re-reads these locked-in
-    values when applying the top-up; it never re-derives amount/days from anything in the
-    webhook payload itself; it only trusts this row's own status transition.
-
-    Design choice for Bulk Top-Up (documented per STEP 2.3 task's "your call" note): one Payment
-    row PER MACHINE, with all Payments in one bulk batch sharing the same
-    paymongo_checkout_session_id (a single PayMongo Checkout Session covers the whole batch as
-    one combined charge, using PayMongo's multi-line-item support). This was chosen over a
-    separate "batch" table because: (a) it keeps Payment always mapped 1:1 to exactly one
-    Machine, so the webhook's "apply this top-up" logic is identical for single and bulk cases;
-    (b) the atomic all-or-nothing requirement falls out naturally -- the webhook looks up every
-    Payment row sharing a session id and applies them together in one DB transaction, so a
-    single PayMongo charge succeeding means the whole batch is confirmed at once, with no
-    partial-batch state possible.
+    STEP 2.3's Payment used to FK to Machine and carry bundle_type/days for a specific top-up.
+    That's gone: this Payment FKs to Account (the wallet owner) and just carries the peso amount
+    being funded. See the STEP 2.4 migration for how existing STEP 2.3 Payment rows were handled
+    (backfilled to the owning Account, bundle_type/days dropped since they don't apply to a
+    wallet-funding transaction).
     """
 
-    machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name="payments")
-    bundle_type = models.CharField(max_length=10, choices=BUNDLE_TYPE_CHOICES)
-    days = models.IntegerField()
+    account = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="payments")
     amount_pesos = models.DecimalField(max_digits=10, decimal_places=2)
-    # Not unique: multiple Payment rows (one per machine) share one session id in a bulk top-up.
     paymongo_checkout_session_id = models.CharField(max_length=64, blank=True, db_index=True)
     status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"Payment({self.machine.license_key}, {self.bundle_type}, {self.status})"
+        return f"Payment({self.account.phone_number}, ₱{self.amount_pesos}, {self.status})"
