@@ -37,9 +37,9 @@ class TransactionAdmin(admin.ModelAdmin):
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
     list_display = [
-        "id", "machine", "bundle_type", "days", "amount_pesos", "status",
+        "id", "account", "amount_pesos", "status",
         "paymongo_checkout_session_id", "created_at", "paid_at",
     ]
-    list_filter = ["status", "bundle_type"]
-    search_fields = ["machine__license_key", "paymongo_checkout_session_id"]
+    list_filter = ["status"]
+    search_fields = ["account__phone_number", "paymongo_checkout_session_id"]
     readonly_fields = ["created_at", "paid_at"]
