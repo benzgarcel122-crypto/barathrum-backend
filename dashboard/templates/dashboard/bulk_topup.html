@@ -6,6 +6,11 @@
   <h1>Bulk top up ({{ machines|length }} machines)</h1>
 </div>
 
+<div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+  <span class="text-muted">Wallet balance: <strong style="color: var(--color-text);">₱{{ balance_points }}</strong></span>
+  <a href="{% url 'dashboard:wallet_topup' %}" class="btn btn-sm btn-secondary">+ Top Up Wallet</a>
+</div>
+
 <form method="post" action="{% url 'dashboard:bulk_topup' %}" id="bulk-form">
   {% csrf_token %}
   {% for machine in machines %}
@@ -31,7 +36,7 @@
   <div class="batch-bar" style="position: static;">
     <span>Total: <span class="batch-total" id="bulk-total">₱0</span></span>
     <button type="submit" class="btn btn-sm" style="background:#fff; color: var(--color-accent-dark);">
-      Confirm Top Up for All
+      Spend from Wallet for All
     </button>
   </div>
 </form>
