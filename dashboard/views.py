@@ -3,13 +3,14 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from machines import paymongo_client
-from machines.models import BUNDLE_TYPE_CHOICES, Machine, Payment, Transaction
+from machines.models import BUNDLE_TYPE_CHOICES, License, Machine, Payment, Transaction
 from machines.paymongo_client import PayMongoAPIError
 
 Account = get_user_model()
@@ -114,8 +115,18 @@ def _initiate_paymongo_checkout(payment, request):
     return checkout_url
 
 
-@login_required
 def home_view(request):
+    """
+    STEP 2.5 (Session 31): "/" now serves two audiences. Logged-out visitors get the public
+    Landing Page (kept as one view + one URL name, "dashboard:home", so every existing
+    `redirect("dashboard:home")` call elsewhere in this file keeps working unchanged for
+    authenticated users -- no new URL name needed). Logged-in visitors still see the exact same
+    Dashboard Home as before -- no @login_required decorator anymore since this view now
+    explicitly handles the logged-out case itself instead of redirecting to /login/.
+    """
+    if not request.user.is_authenticated:
+        return render(request, "dashboard/landing.html", {})
+
     machines = Machine.objects.filter(owner=request.user).order_by("-created_at")
     cards = [_machine_card_context(m) for m in machines]
     any_needs_topup = any(c["needs_topup"] for c in cards)
@@ -134,17 +145,97 @@ def home_view(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
+def generate_license_view(request):
+    """
+    STEP 2.5 (Session 31): standalone license key generation, decoupled from Add Machine.
+    Creates a License row tied to the logged-in Account, not yet linked to any Machine. Shown
+    once with a copy button -- same UX pattern as the old "Machine added" screen.
+    """
+    if request.method == "GET":
+        return render(request, "dashboard/generate_license.html", {"active_nav": "add_machine"})
+
+    license_obj = License.objects.create(account=request.user)
+    return render(
+        request,
+        "dashboard/license_generated.html",
+        {"active_nav": "add_machine", "license": license_obj},
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
 def add_machine_view(request):
+    """
+    STEP 2.5 (Session 31): Add Machine no longer generates a license key inline. The operator
+    must paste a key that was already generated via generate_license_view.
+
+    Ownership rule (explicit design call, see Session 31 report for the "your call, tell me why"
+    write-up): the pasted key must belong to the CURRENTLY LOGGED-IN ACCOUNT -- i.e. it must be
+    one this same account generated -- not merely "any unclaimed key" system-wide. Chosen over
+    the looser "any unclaimed key" rule because license keys are shown once on-screen and could
+    end up in a screenshot, chat log, or over someone's shoulder; if any unclaimed key could be
+    claimed by any account, a leaked-but-not-yet-claimed key becomes stealable by a stranger.
+    Requiring an account match means a leaked key is only usable by someone who also controls
+    (or has otherwise compromised) the generating account -- consistent with how license_key
+    already isn't treated as a public/shareable value anywhere else in this app.
+    """
     if request.method == "GET":
         return render(request, "dashboard/add_machine.html", {"active_nav": "add_machine"})
 
+    license_key_input = request.POST.get("license_key", "").strip().upper()
     nickname = request.POST.get("nickname", "").strip()
-    machine = Machine.objects.create(owner=request.user, nickname=nickname)
+    context = {
+        "active_nav": "add_machine",
+        "license_key_input": license_key_input,
+        "nickname": nickname,
+    }
+
+    if not license_key_input:
+        messages.error(request, "Enter a license key.")
+        return render(request, "dashboard/add_machine.html", context)
+
+    try:
+        license_obj = License.objects.get(license_key=license_key_input, account=request.user)
+    except License.DoesNotExist:
+        messages.error(
+            request,
+            "That license key wasn't found on your account. Generate a license key first, "
+            "then paste it here exactly as shown.",
+        )
+        return render(request, "dashboard/add_machine.html", context)
+
+    if Machine.objects.filter(license_key=license_obj.license_key).exists():
+        messages.error(request, "This license key is already attached to a machine.")
+        return render(request, "dashboard/add_machine.html", context)
+
+    try:
+        with db_transaction.atomic():
+            machine = Machine.objects.create(
+                owner=request.user, nickname=nickname, license_key=license_obj.license_key
+            )
+    except IntegrityError:
+        # Race: another request claimed this exact key between the check above and this insert.
+        # Machine.license_key's DB-level unique constraint is the real guarantee here, same
+        # pattern as generate_unique_license_key's own comment in machines/models.py.
+        messages.error(
+            request, "This license key was just claimed by another machine. Try a different key."
+        )
+        return render(request, "dashboard/add_machine.html", context)
+
     return render(
         request,
         "dashboard/machine_created.html",
         {"active_nav": "add_machine", "machine": machine},
     )
+
+
+def download_placeholder_view(request):
+    """
+    STEP 2.5 (Session 31): STEP 1's box agent doesn't exist yet, so "Download Box Software" on
+    the Landing Page points here instead of a broken/fabricated link. Public (no login required)
+    since a logged-out visitor is the primary audience for this CTA.
+    """
+    return render(request, "dashboard/download_placeholder.html", {})
 
 
 @login_required
@@ -205,12 +296,12 @@ def topup_view(request, machine_id):
         except ValueError:
             days_added = 0
         if days_added <= 0:
-            messages.error(request, "Enter a number of days greater than zero.")
-            return redirect(f"{request.path}?tab=custom")
-        bundle_type = "custom"
+            messages.error(request, "Enter a valid number of days.")
+            return redirect("dashboard:topup", machine_id=machine.id)
         price = CUSTOM_PRICE_PER_DAY * days_added
+        bundle_type = None
     else:
-        messages.error(request, "Choose a bundle or a custom number of days.")
+        messages.error(request, "Invalid top-up request.")
         return redirect("dashboard:topup", machine_id=machine.id)
 
     price_points = int(price)  # wallet balance is in whole points, 1:1 with pesos
