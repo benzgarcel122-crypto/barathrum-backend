@@ -348,3 +348,72 @@ a { color: var(--color-accent-dark); }
 .text-muted { color: var(--color-text-muted); }
 .mt-16 { margin-top: 16px; }
 .mb-16 { margin-bottom: 16px; }
+
+/* ---------- Landing page (Session 31, STEP 2.5) ---------- */
+.landing-hero {
+  text-align: center;
+  padding: 32px 8px 24px;
+}
+.landing-hero h1 {
+  font-size: 1.8rem;
+  margin: 0 0 12px;
+  line-height: 1.2;
+}
+.landing-hero-sub {
+  color: var(--color-text-muted);
+  max-width: 520px;
+  margin: 0 auto 24px;
+}
+.landing-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.landing-steps { margin: 32px 0; }
+.landing-steps h2 {
+  text-align: center;
+  font-size: 1.3rem;
+  margin-bottom: 20px;
+}
+.landing-steps-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+@media (min-width: 700px) {
+  .landing-steps-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.landing-step {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.landing-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-green-bg);
+  color: var(--color-accent-dark);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.landing-step h3 { font-size: 1rem; margin: 0 0 6px; }
+
+.landing-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 20px 4px 8px;
+  margin-top: 24px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+.landing-footer a { color: var(--color-text-muted); }
