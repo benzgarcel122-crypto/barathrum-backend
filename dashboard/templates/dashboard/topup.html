@@ -6,6 +6,11 @@
   <h1>Top up {{ machine.nickname|default:machine.license_key }}</h1>
 </div>
 
+<div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+  <span class="text-muted">Wallet balance: <strong style="color: var(--color-text);">₱{{ balance_points }}</strong></span>
+  <a href="{% url 'dashboard:wallet_topup' %}" class="btn btn-sm btn-secondary">+ Top Up Wallet</a>
+</div>
+
 <div class="tabs">
   <a href="?tab=bundles" class="{% if tab != 'custom' %}active{% endif %}">Bundles</a>
   <a href="?tab=custom" class="{% if tab == 'custom' %}active{% endif %}">Custom</a>
@@ -20,10 +25,10 @@
       <label for="id_custom_days">Number of days</label>
       <input type="number" id="id_custom_days" name="custom_days" min="1" step="1"
              oninput="document.getElementById('custom-total').textContent = (parseInt(this.value)||0) * {{ custom_price_per_day }};">
-      <div class="field-hint">₱{{ custom_price_per_day }} per day</div>
+      <div class="field-hint">₱{{ custom_price_per_day }} per day, paid from your wallet</div>
     </div>
     <p>Total: <strong>₱<span id="custom-total">0</span></strong></p>
-    <button type="submit" class="btn btn-block">Confirm Top Up</button>
+    <button type="submit" class="btn btn-block">Spend from Wallet</button>
   </form>
 </div>
 {% else %}
@@ -43,7 +48,7 @@
       </span>
     </label>
     {% endfor %}
-    <button type="submit" class="btn btn-block mt-16">Confirm Top Up</button>
+    <button type="submit" class="btn btn-block mt-16">Spend from Wallet</button>
   </form>
 </div>
 {% endif %}
