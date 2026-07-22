@@ -1,7 +1,30 @@
 from django.contrib.admin.models import LogEntry
 from django.test import TestCase
 
-from .models import Account
+from .models import Account, OTPCode
+
+
+class AuthFormRedirectTests(TestCase):
+    """
+    Regression coverage for a real production bug: login_view and signup_view's POST paths
+    (real HTML form submissions, not the JSON API variant) both build their redirect via
+    quote(phone_number) -- if the `from urllib.parse import quote` import is ever missing, this
+    is a NameError that only fires on an actual form POST, which nothing in this test file
+    previously exercised. Both call sites are covered here now.
+    """
+
+    def test_signup_form_post_redirects_to_verify(self):
+        resp = self.client.post(
+            "/signup/", {"phone_number": "09171234567", "display_name": "New Op"}
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp.url.startswith("/verify/?phone="))
+
+    def test_login_form_post_redirects_to_verify(self):
+        Account.objects.create_user(phone_number="09171234567", display_name="Existing Op")
+        resp = self.client.post("/login/", {"phone_number": "09171234567"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(resp.url.startswith("/verify/?phone="))
 
 
 class GiftPointsAdminActionTests(TestCase):
