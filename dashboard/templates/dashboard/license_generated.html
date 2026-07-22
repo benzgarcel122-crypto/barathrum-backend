@@ -1,0 +1,43 @@
+{% extends "dashboard_base.html" %}
+{% block title %}License key generated — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>License key generated</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p>Here's your new license key. It's not attached to a machine yet.</p>
+
+  <div class="license-key-box">
+    <span id="license-key-text">{{ license.license_key }}</span>
+    <button type="button" class="btn btn-sm btn-secondary" id="copy-key-btn" onclick="copyLicenseKey()">Copy</button>
+  </div>
+  <p class="field-hint">Keep this key safe. Paste it into Add Machine when you're ready to activate a box.</p>
+
+  <a href="{% url 'dashboard:add_machine' %}" class="btn btn-block mt-16">Add a machine with this key</a>
+  <a href="{% url 'dashboard:home' %}" class="btn btn-secondary btn-block mt-16">Back to Dashboard</a>
+</div>
+
+<script>
+function copyLicenseKey() {
+  var text = document.getElementById('license-key-text').textContent;
+  var btn = document.getElementById('copy-key-btn');
+  function markCopied() {
+    btn.textContent = 'Copied!';
+    setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(markCopied);
+  } else {
+    var tmp = document.createElement('textarea');
+    tmp.value = text;
+    document.body.appendChild(tmp);
+    tmp.select();
+    document.execCommand('copy');
+    document.body.removeChild(tmp);
+    markCopied();
+  }
+}
+</script>
+{% endblock %}

@@ -1,17 +1,21 @@
 from decimal import Decimal
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from machines import paymongo_client
-from machines.models import BUNDLE_TYPE_CHOICES, Machine, Payment
+from machines.models import BUNDLE_TYPE_CHOICES, License, Machine, Payment, Transaction
 from machines.paymongo_client import PayMongoAPIError
 
-# Bundle pricing, per the locked design in the STEP 2.2 task:
+Account = get_user_model()
+
+# Bundle pricing, per the locked design in the STEP 2.2 task -- UNCHANGED by STEP 2.4:
 #   bundle_type -> (days, price_pesos)
 # Custom top-ups are priced separately at CUSTOM_PRICE_PER_DAY and aren't in this table.
 BUNDLE_PRICING = {
@@ -29,6 +33,9 @@ MONITORING_UNLOCK_BUNDLES = ("300day", "1000day")
 # yellow/red color coding: 7 days or fewer left (including 0/expired). This wasn't spelled out
 # explicitly in the task, so flagging the assumption here for the PM to confirm.
 NEEDS_TOPUP_THRESHOLD_DAYS = 7
+
+# STEP 2.4: quick-tap preset amounts for wallet funding, in whole pesos (== points, flat 1:1).
+WALLET_TOPUP_PRESETS = [100, 500, 1000]
 
 
 def _bundle_pricing_with_discount():
@@ -69,52 +76,57 @@ def _machine_card_context(machine):
     }
 
 
-_BUNDLE_LABELS = dict(BUNDLE_TYPE_CHOICES)
-
-
-def _initiate_paymongo_checkout(payments, request):
+def _initiate_paymongo_checkout(payment, request):
     """
-    Create a single PayMongo Checkout Session covering every Payment in `payments` (one machine
-    each). Stamps the resulting session id onto every Payment row so the webhook can find them
-    all later, and returns the checkout_url to redirect the operator to.
+    Create a PayMongo Checkout Session for a single wallet-funding Payment. Stamps the resulting
+    session id onto the Payment row so the webhook can find it later, and returns the
+    checkout_url to redirect the operator to.
 
-    Raises PayMongoAPIError on any failure -- callers are responsible for marking the Payment(s)
-    as "failed" and showing the operator an error; this function does not touch Payment.status.
+    STEP 2.4: unlike STEP 2.3 (which could bundle several Payments -- one per machine -- into
+    one checkout), wallet funding is always exactly one Payment per checkout: the operator is
+    topping up their own single wallet, there's no "batch" concept here anymore.
+
+    Raises PayMongoAPIError on any failure -- callers are responsible for marking the Payment as
+    "failed" and showing the operator an error; this function does not touch Payment.status.
     """
-    line_items = [
-        {
-            "currency": "PHP",
-            "amount": int(p.amount_pesos * 100),  # PayMongo amounts are centavos, not pesos
-            "name": f"{p.machine.nickname or p.machine.license_key} — "
-                     f"{_BUNDLE_LABELS.get(p.bundle_type, p.bundle_type)}",
-            "quantity": 1,
-        }
-        for p in payments
-    ]
-    payment_ids_param = ",".join(str(p.id) for p in payments)
+    line_items = [{
+        "currency": "PHP",
+        "amount": int(payment.amount_pesos * 100),  # PayMongo amounts are centavos, not pesos
+        "name": f"Barathrum wallet top-up (₱{payment.amount_pesos})",
+        "quantity": 1,
+    }]
 
     session_id, checkout_url = paymongo_client.create_checkout_session(
         line_items=line_items,
         payment_method_types=["gcash", "paymaya"],
         success_url=request.build_absolute_uri(
-            reverse("dashboard:payment_return") + f"?payment_ids={payment_ids_param}"
+            reverse("dashboard:payment_return") + f"?payment_ids={payment.id}"
         ),
         cancel_url=request.build_absolute_uri(
-            reverse("dashboard:payment_cancel") + f"?payment_ids={payment_ids_param}"
+            reverse("dashboard:payment_cancel") + f"?payment_ids={payment.id}"
         ),
-        reference_number=payment_ids_param,
-        description=f"Barathrum top-up — {len(payments)} machine(s)",
+        reference_number=str(payment.id),
+        description="Barathrum wallet top-up",
     )
 
-    for payment in payments:
-        payment.paymongo_checkout_session_id = session_id
-        payment.save(update_fields=["paymongo_checkout_session_id"])
+    payment.paymongo_checkout_session_id = session_id
+    payment.save(update_fields=["paymongo_checkout_session_id"])
 
     return checkout_url
 
 
-@login_required
 def home_view(request):
+    """
+    STEP 2.5 (Session 31): "/" now serves two audiences. Logged-out visitors get the public
+    Landing Page (kept as one view + one URL name, "dashboard:home", so every existing
+    `redirect("dashboard:home")` call elsewhere in this file keeps working unchanged for
+    authenticated users -- no new URL name needed). Logged-in visitors still see the exact same
+    Dashboard Home as before -- no @login_required decorator anymore since this view now
+    explicitly handles the logged-out case itself instead of redirecting to /login/.
+    """
+    if not request.user.is_authenticated:
+        return render(request, "dashboard/landing.html", {})
+
     machines = Machine.objects.filter(owner=request.user).order_by("-created_at")
     cards = [_machine_card_context(m) for m in machines]
     any_needs_topup = any(c["needs_topup"] for c in cards)
@@ -126,23 +138,104 @@ def home_view(request):
             "active_nav": "dashboard",
             "cards": cards,
             "any_needs_topup": any_needs_topup,
+            "balance_points": request.user.balance_points,
         },
     )
 
 
 @login_required
 @require_http_methods(["GET", "POST"])
+def generate_license_view(request):
+    """
+    STEP 2.5 (Session 31): standalone license key generation, decoupled from Add Machine.
+    Creates a License row tied to the logged-in Account, not yet linked to any Machine. Shown
+    once with a copy button -- same UX pattern as the old "Machine added" screen.
+    """
+    if request.method == "GET":
+        return render(request, "dashboard/generate_license.html", {"active_nav": "add_machine"})
+
+    license_obj = License.objects.create(account=request.user)
+    return render(
+        request,
+        "dashboard/license_generated.html",
+        {"active_nav": "add_machine", "license": license_obj},
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
 def add_machine_view(request):
+    """
+    STEP 2.5 (Session 31): Add Machine no longer generates a license key inline. The operator
+    must paste a key that was already generated via generate_license_view.
+
+    Ownership rule (explicit design call, see Session 31 report for the "your call, tell me why"
+    write-up): the pasted key must belong to the CURRENTLY LOGGED-IN ACCOUNT -- i.e. it must be
+    one this same account generated -- not merely "any unclaimed key" system-wide. Chosen over
+    the looser "any unclaimed key" rule because license keys are shown once on-screen and could
+    end up in a screenshot, chat log, or over someone's shoulder; if any unclaimed key could be
+    claimed by any account, a leaked-but-not-yet-claimed key becomes stealable by a stranger.
+    Requiring an account match means a leaked key is only usable by someone who also controls
+    (or has otherwise compromised) the generating account -- consistent with how license_key
+    already isn't treated as a public/shareable value anywhere else in this app.
+    """
     if request.method == "GET":
         return render(request, "dashboard/add_machine.html", {"active_nav": "add_machine"})
 
+    license_key_input = request.POST.get("license_key", "").strip().upper()
     nickname = request.POST.get("nickname", "").strip()
-    machine = Machine.objects.create(owner=request.user, nickname=nickname)
+    context = {
+        "active_nav": "add_machine",
+        "license_key_input": license_key_input,
+        "nickname": nickname,
+    }
+
+    if not license_key_input:
+        messages.error(request, "Enter a license key.")
+        return render(request, "dashboard/add_machine.html", context)
+
+    try:
+        license_obj = License.objects.get(license_key=license_key_input, account=request.user)
+    except License.DoesNotExist:
+        messages.error(
+            request,
+            "That license key wasn't found on your account. Generate a license key first, "
+            "then paste it here exactly as shown.",
+        )
+        return render(request, "dashboard/add_machine.html", context)
+
+    if Machine.objects.filter(license_key=license_obj.license_key).exists():
+        messages.error(request, "This license key is already attached to a machine.")
+        return render(request, "dashboard/add_machine.html", context)
+
+    try:
+        with db_transaction.atomic():
+            machine = Machine.objects.create(
+                owner=request.user, nickname=nickname, license_key=license_obj.license_key
+            )
+    except IntegrityError:
+        # Race: another request claimed this exact key between the check above and this insert.
+        # Machine.license_key's DB-level unique constraint is the real guarantee here, same
+        # pattern as generate_unique_license_key's own comment in machines/models.py.
+        messages.error(
+            request, "This license key was just claimed by another machine. Try a different key."
+        )
+        return render(request, "dashboard/add_machine.html", context)
+
     return render(
         request,
         "dashboard/machine_created.html",
         {"active_nav": "add_machine", "machine": machine},
     )
+
+
+def download_placeholder_view(request):
+    """
+    STEP 2.5 (Session 31): STEP 1's box agent doesn't exist yet, so "Download Box Software" on
+    the Landing Page points here instead of a broken/fabricated link. Public (no login required)
+    since a logged-out visitor is the primary audience for this CTA.
+    """
+    return render(request, "dashboard/download_placeholder.html", {})
 
 
 @login_required
@@ -164,6 +257,12 @@ def machine_detail_view(request, machine_id):
 @login_required
 @require_http_methods(["GET", "POST"])
 def topup_view(request, machine_id):
+    """
+    STEP 2.4: per-machine top-up now spends from the operator's own wallet (Account.balance_points)
+    instead of creating a Payment/redirecting to PayMongo. No external call, no redirect away from
+    the site at all -- this is now a single atomic DB transaction, same as STEP 2.2's original stub,
+    just gated on a real balance check instead of being unconditionally free.
+    """
     machine = get_object_or_404(Machine, id=machine_id, owner=request.user)
 
     if request.method == "GET":
@@ -177,6 +276,7 @@ def topup_view(request, machine_id):
                 "tab": tab,
                 "bundles": _bundle_pricing_with_discount(),
                 "custom_price_per_day": CUSTOM_PRICE_PER_DAY,
+                "balance_points": request.user.balance_points,
             },
         )
 
@@ -189,43 +289,67 @@ def topup_view(request, machine_id):
             messages.error(request, "Pick a valid bundle.")
             return redirect("dashboard:topup", machine_id=machine.id)
         days_added = info["days"]
-        amount_paid = info["price"]
+        price = info["price"]
     elif mode == "custom":
         try:
             days_added = int(request.POST.get("custom_days", "0"))
         except ValueError:
             days_added = 0
         if days_added <= 0:
-            messages.error(request, "Enter a number of days greater than zero.")
-            return redirect(f"{request.path}?tab=custom")
-        bundle_type = "custom"
-        amount_paid = CUSTOM_PRICE_PER_DAY * days_added
+            messages.error(request, "Enter a valid number of days.")
+            return redirect("dashboard:topup", machine_id=machine.id)
+        price = CUSTOM_PRICE_PER_DAY * days_added
+        bundle_type = None
     else:
-        messages.error(request, "Choose a bundle or a custom number of days.")
+        messages.error(request, "Invalid top-up request.")
         return redirect("dashboard:topup", machine_id=machine.id)
 
-    # STEP 2.3: no longer instant/stubbed. Lock the bundle/days/amount into a Payment row FIRST
-    # (server-side, before any redirect), then hand off to PayMongo. days_remaining is only ever
-    # incremented later, by the webhook, once PayMongo confirms the payment actually succeeded.
-    payment = Payment.objects.create(
-        machine=machine, bundle_type=bundle_type, days=days_added, amount_pesos=amount_paid,
-        status="pending",
+    price_points = int(price)  # wallet balance is in whole points, 1:1 with pesos
+
+    if request.user.balance_points < price_points:
+        messages.error(
+            request,
+            f"Not enough wallet balance for this top-up (need ₱{price_points}, you have "
+            f"₱{request.user.balance_points}). Top up your wallet first.",
+        )
+        return redirect("dashboard:topup", machine_id=machine.id)
+
+    with db_transaction.atomic():
+        # Re-fetch and lock the Account row so two near-simultaneous top-ups from the same
+        # operator can't both pass the balance check above against a stale balance.
+        account = Account.objects.select_for_update().get(pk=request.user.pk)
+        if account.balance_points < price_points:
+            messages.error(request, "Not enough wallet balance for this top-up.")
+            return redirect("dashboard:topup", machine_id=machine.id)
+
+        account.balance_points -= price_points
+        account.save(update_fields=["balance_points"])
+
+        machine.days_remaining += days_added
+        machine.last_topup_bundle_type = bundle_type
+        machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+
+        Transaction.objects.create(
+            machine=machine,
+            bundle_type=bundle_type,
+            days_added=days_added,
+            amount_paid_pesos=price,
+        )
+
+    messages.success(
+        request,
+        f"Topped up {machine.nickname or machine.license_key} with {days_added} days "
+        f"(₱{price_points} from your wallet).",
     )
-
-    try:
-        checkout_url = _initiate_paymongo_checkout([payment], request)
-    except PayMongoAPIError as exc:
-        payment.status = "failed"
-        payment.save(update_fields=["status"])
-        messages.error(request, f"Couldn't start the payment: {exc}")
-        return redirect("dashboard:topup", machine_id=machine.id)
-
-    return redirect(checkout_url)
+    return redirect("dashboard:home")
 
 
 @login_required
 @require_http_methods(["GET", "POST"])
 def bulk_topup_view(request):
+    """STEP 2.4: same wallet-balance model as topup_view, applied across every selected machine
+    together -- one combined balance check, one atomic deduction, no external payment gateway
+    step to coordinate around anymore."""
     query = request.GET if request.method == "GET" else request.POST
 
     machine_ids = [int(v) for v in query.getlist("machine_id") if v.isdigit()]
@@ -250,10 +374,11 @@ def bulk_topup_view(request):
                 "machines": machines,
                 "bundles": _bundle_pricing_with_discount(),
                 "ids_param": ids_param,
+                "balance_points": request.user.balance_points,
             },
         )
 
-    # POST: apply every selected machine's chosen bundle atomically.
+    # POST: validate every machine has a bundle chosen, and sum the total cost first.
     updates = []
     for machine in machines:
         bundle_type = request.POST.get(f"bundle_{machine.id}")
@@ -263,26 +388,81 @@ def bulk_topup_view(request):
             return redirect(f"/machines/bulk-topup/?ids={ids_param}")
         updates.append((machine, bundle_type, info["days"], info["price"]))
 
-    # STEP 2.3: create one Payment per machine, all locked in server-side before any redirect --
-    # see the Payment model docstring for why bulk top-up uses one-Payment-per-machine sharing a
-    # single PayMongo checkout session, rather than a separate batch table.
+    total_points = int(sum(u[3] for u in updates))
+
+    if request.user.balance_points < total_points:
+        messages.error(
+            request,
+            f"Not enough wallet balance for this batch (need ₱{total_points}, you have "
+            f"₱{request.user.balance_points}). Top up your wallet first, or select fewer machines.",
+        )
+        return redirect(f"/machines/bulk-topup/?ids={ids_param}")
+
     with db_transaction.atomic():
-        payments = [
-            Payment.objects.create(
-                machine=machine, bundle_type=bundle_type, days=days_added, amount_pesos=amount_paid,
-                status="pending",
+        account = Account.objects.select_for_update().get(pk=request.user.pk)
+        if account.balance_points < total_points:
+            # Same-shape re-check as topup_view -- see that view's comment for why.
+            messages.error(request, "Not enough wallet balance for this batch.")
+            return redirect(f"/machines/bulk-topup/?ids={ids_param}")
+
+        account.balance_points -= total_points
+        account.save(update_fields=["balance_points"])
+
+        for machine, bundle_type, days_added, price in updates:
+            machine.days_remaining += days_added
+            machine.last_topup_bundle_type = bundle_type
+            machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+            Transaction.objects.create(
+                machine=machine,
+                bundle_type=bundle_type,
+                days_added=days_added,
+                amount_paid_pesos=price,
             )
-            for machine, bundle_type, days_added, amount_paid in updates
-        ]
+
+    messages.success(
+        request,
+        f"Topped up {len(updates)} machines — ₱{total_points} deducted from your wallet.",
+    )
+    return redirect("dashboard:home")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def wallet_topup_view(request):
+    """
+    STEP 2.4: fund the wallet itself -- flat 1:1 peso-to-point, no bundle tiers. Reuses the exact
+    same PayMongo Checkout Session integration STEP 2.3 built; only what the Payment represents
+    has changed (account-level funding, not a specific machine/bundle purchase).
+    """
+    if request.method == "GET":
+        return render(
+            request,
+            "dashboard/wallet_topup.html",
+            {
+                "active_nav": "dashboard",
+                "balance_points": request.user.balance_points,
+                "presets": WALLET_TOPUP_PRESETS,
+            },
+        )
 
     try:
-        checkout_url = _initiate_paymongo_checkout(payments, request)
+        amount = int(request.POST.get("amount", "0"))
+    except ValueError:
+        amount = 0
+
+    if amount <= 0:
+        messages.error(request, "Enter an amount greater than zero.")
+        return redirect("dashboard:wallet_topup")
+
+    payment = Payment.objects.create(account=request.user, amount_pesos=amount, status="pending")
+
+    try:
+        checkout_url = _initiate_paymongo_checkout(payment, request)
     except PayMongoAPIError as exc:
-        for payment in payments:
-            payment.status = "failed"
-            payment.save(update_fields=["status"])
+        payment.status = "failed"
+        payment.save(update_fields=["status"])
         messages.error(request, f"Couldn't start the payment: {exc}")
-        return redirect(f"/machines/bulk-topup/?ids={ids_param}")
+        return redirect("dashboard:wallet_topup")
 
     return redirect(checkout_url)
 
@@ -291,19 +471,19 @@ def bulk_topup_view(request):
 def payment_return_view(request):
     """
     Landing page after the operator completes payment on PayMongo's hosted checkout and gets
-    redirected back. This does NOT apply the top-up -- that only ever happens from the webhook,
+    redirected back. This does NOT credit the wallet -- that only ever happens from the webhook,
     since redirects aren't guaranteed to fire (closed tab, network blip, etc). This is purely a
     "we're confirming this" message; the dashboard will show the updated balance once the
     webhook has actually landed, which is typically near-instant but not synchronous with this
     redirect.
     """
     payment_ids = [int(i) for i in request.GET.get("payment_ids", "").split(",") if i.isdigit()]
-    matched = Payment.objects.filter(id__in=payment_ids, machine__owner=request.user).count()
+    matched = Payment.objects.filter(id__in=payment_ids, account=request.user).count()
     if matched:
         messages.info(
             request,
-            "Payment received — confirming now. Your balance will update automatically in a "
-            "few seconds once PayMongo confirms it.",
+            "Payment received — confirming now. Your wallet balance will update automatically "
+            "in a few seconds once PayMongo confirms it.",
         )
     else:
         messages.info(request, "Payment step complete.")
@@ -315,9 +495,9 @@ def payment_cancel_view(request):
     """Operator backed out of PayMongo's checkout page. Mark any still-pending Payments failed."""
     payment_ids = [int(i) for i in request.GET.get("payment_ids", "").split(",") if i.isdigit()]
     Payment.objects.filter(
-        id__in=payment_ids, machine__owner=request.user, status="pending"
+        id__in=payment_ids, account=request.user, status="pending"
     ).update(status="failed")
-    messages.error(request, "Payment was cancelled. No changes were made to your balance.")
+    messages.error(request, "Payment was cancelled. Your wallet balance was not changed.")
     return redirect("dashboard:home")
 
 
@@ -326,5 +506,5 @@ def account_settings_view(request):
     return render(
         request,
         "dashboard/account_settings.html",
-        {"active_nav": "account"},
+        {"active_nav": "account", "balance_points": request.user.balance_points},
     )

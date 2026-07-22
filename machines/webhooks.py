@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .models import Payment, Transaction
+from .models import Payment
 
 # Set in Railway's Variables tab -- this is the "Signing Secret" PayMongo shows when you create
 # the webhook endpoint in their dashboard, NOT the same as PAYMONGO_SECRET_KEY (the API key).
@@ -76,11 +76,15 @@ def paymongo_webhook_view(request):
     PayMongo calls this after a checkout session's payment completes. We only ever act on
     `checkout_session.payment.paid` -- every other event type is acknowledged (200) and ignored.
 
+    STEP 2.4: this now credits Account.balance_points (wallet funding), not a Machine's
+    days_remaining -- per-machine top-ups are a separate, fully-internal step that spends from
+    the wallet directly (see dashboard/views.py's topup_view/bulk_topup_view).
+
     NOTE for whoever tests this against a real PayMongo sandbox delivery: the exact shape of
-    `data.attributes.data` below is built from PayMongo's documented event examples, but I could
-    not send myself a real webhook to confirm byte-for-byte (no outbound network access to
-    PayMongo from this sandbox -- see the STEP 2.3 report). If field names don't match on a real
-    delivery, check the raw payload in PayMongo's dashboard webhook logs first.
+    `data.attributes.data` below is built from PayMongo's documented event examples. STEP 2.3
+    confirmed this shape against a real sandbox delivery already (see that report) -- if
+    anything about the payload shape ever changes on PayMongo's end, check the raw payload in
+    PayMongo's dashboard webhook logs first.
     """
     raw_body = request.body  # MUST read raw bytes before any parsing -- see verify function above
     signature_header = request.headers.get("Paymongo-Signature", "")
@@ -117,22 +121,17 @@ def paymongo_webhook_view(request):
 
         # Idempotency guard: PayMongo can and does redeliver the same event. On a redelivery,
         # every Payment row for this session is already "paid" by the first delivery, so this
-        # comes back empty and we no-op instead of double-applying days_remaining/Transactions.
+        # comes back empty and we no-op instead of double-crediting balance_points.
         if not pending_payments:
             return HttpResponse(status=200)
 
         for payment in pending_payments:
-            machine = payment.machine
-            machine.days_remaining += payment.days
-            machine.last_topup_bundle_type = payment.bundle_type
-            machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
-
-            Transaction.objects.create(
-                machine=machine,
-                bundle_type=payment.bundle_type,
-                days_added=payment.days,
-                amount_paid_pesos=payment.amount_pesos,
-            )
+            account = payment.account
+            # STEP 2.4: flat 1:1 peso-to-point funding, no bundle/machine logic here at all.
+            # int() truncation assumes whole-peso amounts, which matches the wallet top-up form
+            # (preset buttons + a whole-number custom input) -- see dashboard/views.py.
+            account.balance_points += int(payment.amount_pesos)
+            account.save(update_fields=["balance_points"])
 
             payment.status = "paid"
             payment.paid_at = timezone.now()

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Barathrum — Pisowifi vendo software{% endblock %}
+{% block content %}
+
+<section class="landing-hero">
+  <h1>Run your pisowifi business from your phone.</h1>
+  <p class="landing-hero-sub">
+    Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
+    pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
+  </p>
+  <div class="landing-cta-row">
+    <a href="{% url 'login' %}" class="btn">Log In</a>
+    <a href="{% url 'signup' %}" class="btn btn-secondary">Sign Up</a>
+    <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
+    <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
+  </div>
+</section>
+
+<section class="landing-steps">
+  <h2>How it works</h2>
+  <div class="landing-steps-grid">
+    <div class="landing-step">
+      <div class="landing-step-num">1</div>
+      <h3>Build or buy your box</h3>
+      <p class="text-muted">Set up a pisowifi unit with a coin acceptor and a small onboard computer.</p>
+    </div>
+    <div class="landing-step">
+      <div class="landing-step-num">2</div>
+      <h3>Download the software</h3>
+      <p class="text-muted">Install the Barathrum box agent to handle coins, sessions, and connectivity.</p>
+    </div>
+    <div class="landing-step">
+      <div class="landing-step-num">3</div>
+      <h3>Generate &amp; paste a license key</h3>
+      <p class="text-muted">Create a license key on your account, then paste it into Add Machine to activate the box.</p>
+    </div>
+    <div class="landing-step">
+      <div class="landing-step-num">4</div>
+      <h3>Manage from your dashboard</h3>
+      <p class="text-muted">Track days remaining, fund your wallet, and top up machines from anywhere.</p>
+    </div>
+  </div>
+</section>
+
+<footer class="landing-footer">
+  <span>&copy; Barathrum</span>
+  <span><a href="{% url 'login' %}">Log In</a> · <a href="{% url 'signup' %}">Sign Up</a></span>
+</footer>
+
+{% endblock %}

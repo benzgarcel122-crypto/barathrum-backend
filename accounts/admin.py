@@ -8,14 +8,14 @@ from .models import Account, OTPCode
 class AccountAdmin(UserAdmin):
     model = Account
     ordering = ["-created_at"]
-    list_display = ["phone_number", "display_name", "is_verified", "is_staff", "created_at"]
+    list_display = ["phone_number", "display_name", "balance_points", "is_verified", "is_staff", "created_at"]
     list_filter = ["is_verified", "is_staff", "is_superuser", "is_active"]
     search_fields = ["phone_number", "display_name"]
     readonly_fields = ["created_at"]
 
     fieldsets = (
         (None, {"fields": ("phone_number", "password")}),
-        ("Profile", {"fields": ("display_name", "is_verified")}),
+        ("Profile", {"fields": ("display_name", "is_verified", "balance_points")}),
         (
             "Permissions",
             {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")},

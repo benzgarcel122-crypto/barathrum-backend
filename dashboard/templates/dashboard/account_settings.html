@@ -15,7 +15,12 @@
     <label>Display name</label>
     <input type="text" value="{{ request.user.display_name }}" disabled>
   </div>
+  <div class="field">
+    <label>Wallet balance</label>
+    <input type="text" value="₱{{ balance_points }}" disabled>
+  </div>
   <p class="field-hint">Editing account details isn't available yet.</p>
+  <a href="{% url 'dashboard:wallet_topup' %}" class="btn btn-sm mt-16">+ Top Up Wallet</a>
 </div>
 
 {% endblock %}

@@ -80,6 +80,10 @@ class Account(AbstractBaseUser, PermissionsMixin):
     is_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # STEP 2.4: account-level wallet balance, in points (1 point = ₱1, flat 1:1 at funding time).
+    # Machine top-ups now spend from this instead of each machine paying PayMongo individually.
+    balance_points = models.IntegerField(default=0)
+
     # Required by Django's admin/auth machinery.
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

@@ -2,6 +2,14 @@
 {% block title %}Dashboard — Barathrum{% endblock %}
 {% block content %}
 
+<div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+  <div>
+    <div class="days-label">Wallet balance</div>
+    <div class="days-remaining" style="color: var(--color-accent-dark);">₱{{ balance_points }}</div>
+  </div>
+  <a href="{% url 'dashboard:wallet_topup' %}" class="btn">+ Top Up Wallet</a>
+</div>
+
 <div class="page-header">
   <h1>Your machines</h1>
   <a href="{% url 'dashboard:add_machine' %}" class="btn btn-sm">+ Add Machine</a>

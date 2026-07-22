@@ -1,0 +1,20 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Generate License Key — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Generate a license key</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">
+    This creates a fresh license key tied to your account. It won't be attached to a machine
+    until you paste it into <a href="{% url 'dashboard:add_machine' %}">Add Machine</a>.
+  </p>
+  <form method="post" action="{% url 'dashboard:generate_license' %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-block">Generate License Key</button>
+  </form>
+</div>
+
+{% endblock %}

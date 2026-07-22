@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Machine, Payment, Transaction
+from .models import License, Machine, Payment, Transaction
 
 
 class TransactionInline(admin.TabularInline):
@@ -34,12 +34,23 @@ class TransactionAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at"]
 
 
+@admin.register(License)
+class LicenseAdmin(admin.ModelAdmin):
+    list_display = ["license_key", "account", "is_claimed", "created_at"]
+    search_fields = ["license_key", "account__phone_number"]
+    readonly_fields = ["license_key", "created_at"]
+
+    @admin.display(boolean=True)
+    def is_claimed(self, obj):
+        return obj.is_claimed
+
+
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
     list_display = [
-        "id", "machine", "bundle_type", "days", "amount_pesos", "status",
+        "id", "account", "amount_pesos", "status",
         "paymongo_checkout_session_id", "created_at", "paid_at",
     ]
-    list_filter = ["status", "bundle_type"]
-    search_fields = ["machine__license_key", "paymongo_checkout_session_id"]
+    list_filter = ["status"]
+    search_fields = ["account__phone_number", "paymongo_checkout_session_id"]
     readonly_fields = ["created_at", "paid_at"]
