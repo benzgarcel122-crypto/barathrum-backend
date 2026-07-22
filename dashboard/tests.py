@@ -73,3 +73,34 @@ class Session31LicenseDecoupleTests(TestCase):
         self.assertEqual(self.client.get(f"/machines/{machine.id}/topup/").status_code, 200)
         self.client.logout()
         self.assertEqual(self.client.get("/download/").status_code, 200)
+
+    def test_logout_button_present_in_dashboard_nav(self):
+        """Was flagged as missing by the PM -- nav bar (visible on every dashboard page) now
+        has a POST-form Log Out button pointing at the 'logout' URL."""
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/")
+        self.assertContains(resp, 'action="/logout/"')
+        self.assertContains(resp, "Log Out")
+
+    def test_logout_via_post_ends_session(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/logout/")
+        self.assertRedirects(resp, "/login/")
+        # Session is really gone -- a subsequent request to a login-required page redirects to login.
+        resp = self.client.get("/machines/add/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
+
+    def test_logout_rejects_get(self):
+        """GET must not log the user out -- see logout_view's docstring for why (CSRF/prefetch)."""
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/logout/")
+        self.assertEqual(resp.status_code, 405)
+        # Still logged in -- confirm a login-required page still works.
+        self.assertEqual(self.client.get("/machines/add/").status_code, 200)
+
+    def test_logout_requires_login(self):
+        """Anonymous POST to /logout/ shouldn't error -- login_required just redirects to login."""
+        resp = self.client.post("/logout/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
