@@ -148,13 +148,16 @@ def home_view(request):
 def generate_license_view(request):
     """
     STEP 2.5 (Session 31): standalone license key generation, decoupled from Add Machine.
-    Creates a License row tied to the logged-in Account, not yet linked to any Machine. Shown
-    once with a copy button -- same UX pattern as the old "Machine added" screen.
+
+    STEP 2.6 (Session 32) REVERSAL, per explicit Investigator directive: the resulting License
+    is created with account=None -- being logged in is still required to reach this view at all
+    (only a real Account can click the button), but the License itself has no owner yet. It
+    stays ownerless until some Machine successfully claims it (see add_machine_view below).
     """
     if request.method == "GET":
         return render(request, "dashboard/generate_license.html", {"active_nav": "add_machine"})
 
-    license_obj = License.objects.create(account=request.user)
+    license_obj = License.objects.create(account=None)
     return render(
         request,
         "dashboard/license_generated.html",
@@ -169,15 +172,13 @@ def add_machine_view(request):
     STEP 2.5 (Session 31): Add Machine no longer generates a license key inline. The operator
     must paste a key that was already generated via generate_license_view.
 
-    Ownership rule (explicit design call, see Session 31 report for the "your call, tell me why"
-    write-up): the pasted key must belong to the CURRENTLY LOGGED-IN ACCOUNT -- i.e. it must be
-    one this same account generated -- not merely "any unclaimed key" system-wide. Chosen over
-    the looser "any unclaimed key" rule because license keys are shown once on-screen and could
-    end up in a screenshot, chat log, or over someone's shoulder; if any unclaimed key could be
-    claimed by any account, a leaked-but-not-yet-claimed key becomes stealable by a stranger.
-    Requiring an account match means a leaked key is only usable by someone who also controls
-    (or has otherwise compromised) the generating account -- consistent with how license_key
-    already isn't treated as a public/shareable value anywhere else in this app.
+    STEP 2.6 (Session 32) REVERSAL, per explicit Investigator directive: the Session 31 rule
+    requiring the pasted key to belong to the claiming account is GONE. A License now has no
+    owner until it's claimed, so the only checks are: does this key exist, and is it not already
+    attached to a Machine. Any logged-in account can claim any unclaimed license, regardless of
+    who (or which account) originally generated it. On a successful claim, License.account is
+    set to the claiming account -- repurposing the field from "who generated this" to "who
+    claimed this," for audit/record purposes only; it is no longer used as an access check.
     """
     if request.method == "GET":
         return render(request, "dashboard/add_machine.html", {"active_nav": "add_machine"})
@@ -195,12 +196,11 @@ def add_machine_view(request):
         return render(request, "dashboard/add_machine.html", context)
 
     try:
-        license_obj = License.objects.get(license_key=license_key_input, account=request.user)
+        license_obj = License.objects.get(license_key=license_key_input)
     except License.DoesNotExist:
         messages.error(
             request,
-            "That license key wasn't found on your account. Generate a license key first, "
-            "then paste it here exactly as shown.",
+            "That license key wasn't found. Double check it's typed correctly.",
         )
         return render(request, "dashboard/add_machine.html", context)
 
@@ -213,6 +213,10 @@ def add_machine_view(request):
             machine = Machine.objects.create(
                 owner=request.user, nickname=nickname, license_key=license_obj.license_key
             )
+            # Repurpose License.account from "generator" to "claimant" now that this key is
+            # spoken for. .update() (not .save()) so this stays inside the same atomic block as
+            # the Machine insert without re-running License.save()'s key-generation logic.
+            License.objects.filter(pk=license_obj.pk).update(account=request.user)
     except IntegrityError:
         # Race: another request claimed this exact key between the check above and this insert.
         # Machine.license_key's DB-level unique constraint is the real guarantee here, same
@@ -296,12 +300,12 @@ def topup_view(request, machine_id):
         except ValueError:
             days_added = 0
         if days_added <= 0:
-            messages.error(request, "Enter a valid number of days.")
-            return redirect("dashboard:topup", machine_id=machine.id)
+            messages.error(request, "Enter a number of days greater than zero.")
+            return redirect(f"{request.path}?tab=custom")
+        bundle_type = "custom"
         price = CUSTOM_PRICE_PER_DAY * days_added
-        bundle_type = None
     else:
-        messages.error(request, "Invalid top-up request.")
+        messages.error(request, "Choose a bundle or a custom number of days.")
         return redirect("dashboard:topup", machine_id=machine.id)
 
     price_points = int(price)  # wallet balance is in whole points, 1:1 with pesos
