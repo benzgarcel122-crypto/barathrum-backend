@@ -12,5 +12,11 @@
   <a href="{% url 'dashboard:account_settings' %}" class="{% if active_nav == 'account' %}active{% endif %}">
     <span class="nav-icon">👤</span><span>Account</span>
   </a>
+  <form method="post" action="{% url 'logout' %}" class="nav-logout-form">
+    {% csrf_token %}
+    <button type="submit" class="nav-logout-btn">
+      <span class="nav-icon">🚪</span><span>Log Out</span>
+    </button>
+  </form>
 </nav>
 {% endblock %}
