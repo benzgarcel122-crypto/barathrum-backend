@@ -8,8 +8,9 @@
 
 <div class="card" style="max-width: 420px;">
   <p class="text-muted">
-    This creates a fresh license key tied to your account. It won't be attached to a machine
-    until you paste it into <a href="{% url 'dashboard:add_machine' %}">Add Machine</a>.
+    This creates a fresh, unclaimed license key. It won't belong to any machine — or any
+    account — until you (or whoever ends up with it) paste it into
+    <a href="{% url 'dashboard:add_machine' %}">Add Machine</a>.
   </p>
   <form method="post" action="{% url 'dashboard:generate_license' %}">
     {% csrf_token %}
