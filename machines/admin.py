@@ -40,6 +40,18 @@ class LicenseAdmin(admin.ModelAdmin):
     search_fields = ["license_key", "account__phone_number"]
     readonly_fields = ["license_key", "created_at"]
 
+    def get_fields(self, request, obj=None):
+        """
+        STEP 2.6 (Session 32): a License now starts ownerless -- account is only ever set once a
+        Machine actually claims it (see dashboard/views.py::add_machine_view). The raw admin
+        "Add" form no longer offers an Account selector at all, so a manually-added License
+        starts unclaimed just like every other one. "Change" still shows account (now optional)
+        for the rare support case of manually correcting who claimed a key.
+        """
+        if obj is None:
+            return ["license_key", "created_at"]
+        return ["license_key", "account", "created_at"]
+
     @admin.display(boolean=True)
     def is_claimed(self, obj):
         return obj.is_claimed
