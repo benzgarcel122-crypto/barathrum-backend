@@ -1,6 +1,5 @@
-from django.contrib.auth import logout as django_logout
-from django.contrib.auth.decorators import login_required
-# ...(rest of imports unchanged)
+import json
+from urllib.parse import quote
 
 from django.contrib import messages
 from django.contrib.auth import login as django_login
@@ -215,9 +214,8 @@ def verify_view(request):
 @require_http_methods(["GET", "POST"])
 def login_view(request):
     """
-    Logout, POST-only. Deliberately not GET: a GET-triggered logout is a well-known CSRF/link-
-    prefetch footgun (a stray <a href> or an over-eager browser prefetch/crawler can silently log
-    a user out). Template side calls this via a small {% csrf_token %} form + button, not a link.
+    Login for an existing Account: same OTP generate flow as signup, but requires the phone
+    number to already be registered. Verification happens via the same verify_view.
     """
     if request.method == "GET":
         return render(request, "accounts/login.html")
