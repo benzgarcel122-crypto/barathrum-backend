@@ -1,0 +1,30 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<p>Gifting points to:</p>
+<ul>
+  {% for account in accounts %}
+    <li>{{ account.phone_number }} — {{ account.display_name|default:"(no name)" }} (current balance: ₱{{ account.balance_points }})</li>
+  {% endfor %}
+</ul>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="ids" value="{{ id_list }}">
+  <div class="form-row">
+    {{ form.points.errors }}
+    <label for="{{ form.points.id_for_label }}">{{ form.points.label }}</label>
+    {{ form.points }}
+    <p class="help">{{ form.points.help_text }}</p>
+  </div>
+  <div class="form-row">
+    {{ form.reason.errors }}
+    <label for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>
+    {{ form.reason }}
+    <p class="help">{{ form.reason.help_text }}</p>
+  </div>
+  <div class="submit-row">
+    <input type="submit" value="Gift Points" class="default">
+  </div>
+</form>
+{% endblock %}
