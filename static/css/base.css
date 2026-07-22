@@ -91,6 +91,25 @@ a { color: var(--color-accent-dark); }
 }
 .app-nav .nav-icon { font-size: 1.15rem; }
 
+/* Logout is a POST form (see logout_view docstring for why), styled to match the <a> nav items
+   it sits alongside. */
+.app-nav .nav-logout-form { flex: 1; display: flex; }
+.app-nav .nav-logout-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-family: inherit;
+  padding: 0;
+}
+
 @media (min-width: 800px) {
   .app-shell { flex-direction: row; }
   .topbar { display: none; }
@@ -114,6 +133,14 @@ a { color: var(--color-accent-dark); }
     gap: 10px;
     padding: 12px 20px;
     font-size: 0.95rem;
+  }
+  .app-nav .nav-logout-btn {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 12px 20px;
+    font-size: 0.95rem;
+    width: 100%;
   }
   .app-main {
     padding: 28px 32px;
