@@ -1,18 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Barathrum — Pisowifi vendo software{% endblock %}
+{% block main_class %}landing-main{% endblock %}
 {% block content %}
 
 <section class="landing-hero">
-  <h1>Run your pisowifi business from your phone.</h1>
-  <p class="landing-hero-sub">
-    Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
-    pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
-  </p>
-  <div class="landing-cta-row">
-    <a href="{% url 'login' %}" class="btn">Log In</a>
-    <a href="{% url 'signup' %}" class="btn btn-secondary">Sign Up</a>
-    <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
-    <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
+  <div class="landing-hero-text">
+    <h1>Run your pisowifi business from your phone.</h1>
+    <p class="landing-hero-sub">
+      Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
+      pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
+    </p>
+    <div class="landing-cta-row">
+      <a href="{% url 'login' %}" class="btn">Log In</a>
+      <a href="{% url 'signup' %}" class="btn btn-secondary">Sign Up</a>
+      <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
+      <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
+    </div>
+  </div>
+
+  <div class="landing-hero-logo">
+    <div class="landing-logo-badge">
+      <svg viewBox="0 0 200 200" class="landing-logo-mark" aria-hidden="true">
+        <defs>
+          <linearGradient id="barathrumLogoGradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#5fb6ff"/>
+            <stop offset="1" stop-color="#e8bf5a"/>
+          </linearGradient>
+        </defs>
+        <g fill="none" stroke="url(#barathrumLogoGradient)" stroke-width="6"
+           stroke-linecap="round" stroke-linejoin="round">
+          <path d="M100 172 L100 118 L60 58 L60 28"/>
+          <path d="M100 118 L140 58 L140 28"/>
+          <path d="M60 58 L28 58"/>
+          <path d="M140 58 L172 58"/>
+          <path d="M100 118 L100 86"/>
+        </g>
+        <g fill="url(#barathrumLogoGradient)">
+          <circle cx="60" cy="28" r="6"/>
+          <circle cx="140" cy="28" r="6"/>
+          <circle cx="28" cy="58" r="5"/>
+          <circle cx="172" cy="58" r="5"/>
+          <circle cx="100" cy="86" r="5"/>
+        </g>
+      </svg>
+      <span class="landing-logo-wordmark">BARATHRUM</span>
+      <span class="landing-logo-tagline">Software Solutions</span>
+    </div>
   </div>
 </section>
 
