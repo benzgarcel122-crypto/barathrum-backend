@@ -1,5 +1,7 @@
+
 {% extends "base.html" %}
 {% block title %}Barathrum — Pisowifi vendo software{% endblock %}
+{% block body_class %}landing-page{% endblock %}
 {% block main_class %}landing-main{% endblock %}
 {% block content %}
 
@@ -27,21 +29,14 @@
             <stop offset="1" stop-color="#e8bf5a"/>
           </linearGradient>
         </defs>
-        <g fill="none" stroke="url(#barathrumLogoGradient)" stroke-width="6"
-           stroke-linecap="round" stroke-linejoin="round">
-          <path d="M100 172 L100 118 L60 58 L60 28"/>
-          <path d="M100 118 L140 58 L140 28"/>
-          <path d="M60 58 L28 58"/>
-          <path d="M140 58 L172 58"/>
-          <path d="M100 118 L100 86"/>
-        </g>
-        <g fill="url(#barathrumLogoGradient)">
-          <circle cx="60" cy="28" r="6"/>
-          <circle cx="140" cy="28" r="6"/>
-          <circle cx="28" cy="58" r="5"/>
-          <circle cx="172" cy="58" r="5"/>
-          <circle cx="100" cy="86" r="5"/>
-        </g>
+        <polygon points="100,14 178,56 178,144 100,186 22,144 22,56"
+                 fill="none" stroke="url(#barathrumLogoGradient)" stroke-width="7"
+                 stroke-linejoin="round"/>
+        <line x1="48" y1="100" x2="152" y2="100"
+              stroke="url(#barathrumLogoGradient)" stroke-width="2.5" opacity="0.45"/>
+        <text x="100" y="134" text-anchor="middle"
+              font-family="Arial, Helvetica, sans-serif" font-weight="800"
+              font-size="98" fill="url(#barathrumLogoGradient)">B</text>
       </svg>
       <span class="landing-logo-wordmark">BARATHRUM</span>
       <span class="landing-logo-tagline">Software Solutions</span>
