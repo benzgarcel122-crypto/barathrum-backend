@@ -148,6 +148,16 @@ a { color: var(--color-accent-dark); }
     max-width: 720px;
     margin: 0;
   }
+  /* Pages that extend base.html directly (login, signup, verify, landing,
+     download-placeholder) don't render the {% block nav %} sidebar at all, so
+     .app-main has nothing to sit next to — margin: 0 above pins it to the far
+     left, leaving a large dead zone on the right at desktop widths. Center it
+     instead when .app-shell has no .app-nav sidebar in it. Higher specificity
+     than the plain .app-main rule above, so this wins for no-sidebar pages
+     without changing anything for dashboard pages that do have a sidebar. */
+  .app-shell:not(:has(.app-nav)) .app-main {
+    margin: 0 auto;
+  }
 }
 
 /* ---------- Cards ---------- */
