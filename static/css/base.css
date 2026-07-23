@@ -376,11 +376,19 @@ a { color: var(--color-accent-dark); }
 .mt-16 { margin-top: 16px; }
 .mb-16 { margin-bottom: 16px; }
  
-/* ---------- Landing page (Session 31, STEP 2.5) ---------- */
+/* ---------- Landing page (Session 31, STEP 2.5; expanded Session 36) ---------- */
+/* .landing-main overrides .app-main's max-width ONLY on this page (via {% block main_class %}
+   in base.html) -- the dashboard's own screens are untouched, still capped at their normal
+   readable width. */
 .landing-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   padding: 32px 8px 24px;
+  gap: 32px;
 }
+.landing-hero-text { width: 100%; }
 .landing-hero h1 {
   font-size: 1.8rem;
   margin: 0 0 12px;
@@ -396,6 +404,68 @@ a { color: var(--color-accent-dark); }
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
+}
+ 
+/* ---------- Coded logo badge (Session 36) -- no external image file, so nothing to go
+   missing/500 again. Dark badge so the gradient mark reads clearly against the light page bg. */
+.landing-hero-logo { display: flex; justify-content: center; }
+.landing-logo-badge {
+  background: linear-gradient(160deg, #0d1a24, #142433);
+  border-radius: 20px;
+  padding: 28px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+}
+.landing-logo-mark {
+  width: 110px;
+  height: 110px;
+  filter: drop-shadow(0 0 6px rgba(95, 182, 255, 0.35));
+}
+.landing-logo-wordmark {
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+}
+.landing-logo-tagline {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+ 
+@media (min-width: 800px) {
+  /* Full-width layout for this page only -- fills the space that used to sit empty next to
+     .app-main's normal 720px cap on wide screens. */
+  .landing-main {
+    max-width: none;
+    width: 100%;
+    padding: 40px 56px;
+  }
+  .landing-hero {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    text-align: left;
+    gap: 48px;
+    padding: 24px 0 48px;
+  }
+  .landing-hero-text { flex: 1 1 58%; }
+  .landing-hero h1 { font-size: 2.6rem; max-width: 640px; }
+  .landing-hero-sub { margin: 0 0 24px; max-width: 560px; }
+  .landing-cta-row { justify-content: flex-start; }
+  .landing-hero-logo { flex: 1 1 34%; justify-content: center; }
+  .landing-logo-mark { width: 140px; height: 140px; }
+  .landing-logo-wordmark { font-size: 1.5rem; }
+}
+ 
+@media (min-width: 1200px) {
+  .landing-hero h1 { font-size: 3rem; }
+  .landing-logo-badge { padding: 36px 44px; }
+  .landing-logo-mark { width: 160px; height: 160px; }
 }
  
 .landing-steps { margin: 32px 0; }
