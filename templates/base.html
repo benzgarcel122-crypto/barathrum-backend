@@ -6,10 +6,10 @@
   <title>{% block title %}Barathrum{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'css/base.css' %}">
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <div class="app-shell">
     <div class="topbar">
-      <span class="brand">Barathrum</span>
+      <span class="brand">Barathrum<span class="brand-sub">Software</span></span>
     </div>
     {% block nav %}{% endblock %}
     <main class="app-main {% block main_class %}{% endblock %}">
