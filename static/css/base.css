@@ -16,9 +16,9 @@
   --sidebar-width: 220px;
   --radius: 10px;
 }
- 
+
 * { box-sizing: border-box; }
- 
+
 html, body {
   margin: 0;
   padding: 0;
@@ -28,15 +28,15 @@ html, body {
   font-size: 16px;
   line-height: 1.45;
 }
- 
+
 a { color: var(--color-accent-dark); }
- 
+
 .app-shell {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
- 
+
 /* ---------- Top brand bar (all viewports) ---------- */
 .topbar {
   display: flex;
@@ -51,7 +51,12 @@ a { color: var(--color-accent-dark); }
   font-size: 1.1rem;
   letter-spacing: 0.01em;
 }
- 
+.topbar .brand-sub {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+}
+
 /* ---------- Main content ---------- */
 .app-main {
   flex: 1;
@@ -61,7 +66,7 @@ a { color: var(--color-accent-dark); }
   width: 100%;
   margin: 0 auto;
 }
- 
+
 /* ---------- Nav: bottom tab bar on narrow, sidebar on wide ---------- */
 .app-nav {
   position: fixed;
@@ -90,7 +95,7 @@ a { color: var(--color-accent-dark); }
   font-weight: 600;
 }
 .app-nav .nav-icon { font-size: 1.15rem; }
- 
+
 /* Logout is a POST form (see logout_view docstring for why), styled to match the <a> nav items
    it sits alongside. */
 .app-nav .nav-logout-form { flex: 1; display: flex; }
@@ -109,10 +114,28 @@ a { color: var(--color-accent-dark); }
   font-family: inherit;
   padding: 0;
 }
- 
+
 @media (min-width: 800px) {
   .app-shell { flex-direction: row; }
   .topbar { display: none; }
+  /* Landing page has no sidebar nav, so the topbar isn't replaced by anything on desktop --
+     keep it visible as a proper header bar instead of leaving an empty strip. */
+  .landing-page .app-shell { flex-direction: column; }
+  .landing-page .topbar {
+    display: flex;
+    align-items: center;
+    padding: 22px 56px;
+  }
+  .landing-page .topbar .brand {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  .landing-page .topbar .brand-sub {
+    font-size: 1.1rem;
+    font-weight: 500;
+    margin-left: 10px;
+  }
   .app-nav {
     position: static;
     flex-direction: column;
@@ -149,7 +172,7 @@ a { color: var(--color-accent-dark); }
     margin: 0;
   }
 }
- 
+
 /* ---------- Cards ---------- */
 .card {
   background: var(--color-surface);
@@ -158,7 +181,7 @@ a { color: var(--color-accent-dark); }
   padding: 16px;
   margin-bottom: 12px;
 }
- 
+
 .machine-card {
   display: flex;
   align-items: flex-start;
@@ -192,12 +215,12 @@ a { color: var(--color-accent-dark); }
   margin-top: 8px;
   flex-wrap: wrap;
 }
- 
+
 /* days-remaining color coding */
 .days-green { color: var(--color-green); }
 .days-yellow { color: var(--color-yellow); }
 .days-red { color: var(--color-red); }
- 
+
 /* ---------- Badges ---------- */
 .badge {
   display: inline-flex;
@@ -216,7 +239,7 @@ a { color: var(--color-accent-dark); }
   color: var(--color-text-muted);
   margin-top: 2px;
 }
- 
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-flex;
@@ -242,7 +265,7 @@ a { color: var(--color-accent-dark); }
 .btn-secondary:hover { background: var(--color-bg); }
 .btn-sm { padding: 6px 12px; font-size: 0.82rem; }
 .btn-block { width: 100%; }
- 
+
 /* ---------- Forms ---------- */
 .field { margin-bottom: 14px; }
 .field label {
@@ -269,7 +292,7 @@ a { color: var(--color-accent-dark); }
   color: var(--color-red);
   margin-top: 4px;
 }
- 
+
 /* ---------- Page header ---------- */
 .page-header {
   display: flex;
@@ -279,7 +302,7 @@ a { color: var(--color-accent-dark); }
   gap: 12px;
 }
 .page-header h1 { font-size: 1.25rem; margin: 0; }
- 
+
 /* ---------- Empty state ---------- */
 .empty-state {
   text-align: center;
@@ -287,7 +310,7 @@ a { color: var(--color-accent-dark); }
   color: var(--color-text-muted);
 }
 .empty-state .empty-icon { font-size: 2rem; margin-bottom: 10px; }
- 
+
 /* ---------- Messages ---------- */
 .messages { list-style: none; margin: 0 0 16px; padding: 0; }
 .messages li {
@@ -299,7 +322,7 @@ a { color: var(--color-accent-dark); }
   color: var(--color-green);
 }
 .messages li.error { background: var(--color-red-bg); color: var(--color-red); }
- 
+
 /* ---------- Batch bar ---------- */
 .batch-bar {
   position: sticky;
@@ -320,7 +343,7 @@ a { color: var(--color-accent-dark); }
 }
 .batch-bar label { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
 .batch-bar .batch-total { font-weight: 700; }
- 
+
 /* ---------- Tabs (Top-Up bundles/custom) ---------- */
 .tabs { display: flex; border-bottom: 1px solid var(--color-border); margin-bottom: 16px; }
 .tabs a {
@@ -332,7 +355,7 @@ a { color: var(--color-accent-dark); }
   border-bottom: 2px solid transparent;
 }
 .tabs a.active { color: var(--color-accent-dark); border-bottom-color: var(--color-accent); }
- 
+
 .bundle-option {
   display: flex;
   align-items: center;
@@ -355,7 +378,7 @@ a { color: var(--color-accent-dark); }
   color: var(--color-green);
   font-weight: 600;
 }
- 
+
 /* ---------- License key display ---------- */
 .license-key-box {
   display: flex;
@@ -371,11 +394,11 @@ a { color: var(--color-accent-dark); }
   letter-spacing: 0.06em;
   margin-bottom: 16px;
 }
- 
+
 .text-muted { color: var(--color-text-muted); }
 .mt-16 { margin-top: 16px; }
 .mb-16 { margin-bottom: 16px; }
- 
+
 /* ---------- Landing page (Session 31, STEP 2.5; expanded Session 36) ---------- */
 /* .landing-main overrides .app-main's max-width ONLY on this page (via {% block main_class %}
    in base.html) -- the dashboard's own screens are untouched, still capped at their normal
@@ -405,7 +428,7 @@ a { color: var(--color-accent-dark); }
   justify-content: center;
   gap: 10px;
 }
- 
+
 /* ---------- Coded logo badge (Session 36) -- no external image file, so nothing to go
    missing/500 again. Dark badge so the gradient mark reads clearly against the light page bg. */
 .landing-hero-logo { display: flex; justify-content: center; }
@@ -436,7 +459,7 @@ a { color: var(--color-accent-dark); }
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
- 
+
 @media (min-width: 800px) {
   /* Full-width layout for this page only -- fills the space that used to sit empty next to
      .app-main's normal 720px cap on wide screens. */
@@ -461,13 +484,13 @@ a { color: var(--color-accent-dark); }
   .landing-logo-mark { width: 140px; height: 140px; }
   .landing-logo-wordmark { font-size: 1.5rem; }
 }
- 
+
 @media (min-width: 1200px) {
   .landing-hero h1 { font-size: 3rem; }
   .landing-logo-badge { padding: 36px 44px; }
   .landing-logo-mark { width: 160px; height: 160px; }
 }
- 
+
 .landing-steps { margin: 32px 0; }
 .landing-steps h2 {
   text-align: center;
@@ -501,7 +524,7 @@ a { color: var(--color-accent-dark); }
   margin-bottom: 8px;
 }
 .landing-step h3 { font-size: 1rem; margin: 0 0 6px; }
- 
+
 .landing-footer {
   display: flex;
   justify-content: space-between;
@@ -514,4 +537,3 @@ a { color: var(--color-accent-dark); }
   font-size: 0.85rem;
 }
 .landing-footer a { color: var(--color-text-muted); }
- 
