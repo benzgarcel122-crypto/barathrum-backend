@@ -1,24 +1,18 @@
 {% extends "base.html" %}
-{% load static %}
 {% block title %}Barathrum — Pisowifi vendo software{% endblock %}
 {% block content %}
 
 <section class="landing-hero">
-  <div class="landing-hero-text">
-    <h1>Run your pisowifi business from your phone.</h1>
-    <p class="landing-hero-sub">
-      Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
-      pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
-    </p>
-    <div class="landing-cta-row">
-      <a href="{% url 'login' %}" class="btn">Log In</a>
-      <a href="{% url 'signup' %}" class="btn btn-secondary">Sign Up</a>
-      <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
-      <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
-    </div>
-  </div>
-  <div class="landing-hero-logo">
-    <img src="{% static 'images/barathrum-logo.png' %}" alt="Barathrum Software Solutions logo">
+  <h1>Run your pisowifi business from your phone.</h1>
+  <p class="landing-hero-sub">
+    Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
+    pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
+  </p>
+  <div class="landing-cta-row">
+    <a href="{% url 'login' %}" class="btn">Log In</a>
+    <a href="{% url 'signup' %}" class="btn btn-secondary">Sign Up</a>
+    <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
+    <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
   </div>
 </section>
 
