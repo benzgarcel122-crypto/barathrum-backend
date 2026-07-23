@@ -173,6 +173,28 @@ a { color: var(--color-accent-dark); }
   }
 }
 
+/* ---------- Back-to-landing link (Session 36, login/signup pages) ---------- */
+.back-to-landing {
+  display: inline-block;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  max-width: 380px;
+  margin: 8px auto 0;
+  padding: 0 4px;
+}
+.back-to-landing:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+@media (min-width: 700px) {
+  .back-to-landing {
+    display: block;
+    width: 380px;
+    margin: 8px auto 0;
+  }
+}
+
 /* ---------- Cards ---------- */
 .card {
   background: var(--color-surface);
