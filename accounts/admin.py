@@ -3,11 +3,18 @@ from django.contrib import admin, messages
 from django.contrib.admin.models import ADDITION, LogEntry
 from django.contrib.admin.options import get_content_type_for_model
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.models import Group
 from django.db import transaction as db_transaction
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 
 from .models import Account, OTPCode
+
+# Groups (Django's built-in auth Group model) is registered automatically by
+# django.contrib.auth's own admin.py before this module loads (see INSTALLED_APPS order in
+# settings.py). Nothing in this app checks group membership -- exposing Add/Change for it is
+# pure confusion with zero function right now, so it's removed from the admin index entirely.
+admin.site.unregister(Group)
 
 
 class GiftPointsForm(forms.Form):
@@ -146,7 +153,17 @@ class AccountAdmin(UserAdmin):
 
 @admin.register(OTPCode)
 class OTPCodeAdmin(admin.ModelAdmin):
-    list_display = ["phone_number", "code", "used", "created_at", "expires_at"]
+    """
+    Trace/debug view only -- "was a code actually issued, is it expired, how many failed
+    attempts" for tracing a "my code isn't working" complaint. Never a control surface: codes
+    are only ever created by OTPCode.issue() from the real signup/login flow, so manually adding
+    or hand-editing one here (e.g. flipping `used`) could mask a real bug instead of surfacing
+    it. List/detail view stays available for debugging; nothing on it is editable.
+    """
+    list_display = ["phone_number", "code", "used", "failed_attempts", "created_at", "expires_at"]
     list_filter = ["used"]
     search_fields = ["phone_number"]
-    readonly_fields = ["created_at"]
+    readonly_fields = ["phone_number", "code", "used", "failed_attempts", "created_at", "expires_at"]
+
+    def has_add_permission(self, request):
+        return False
