@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Sign up — Barathrum{% endblock %}
 {% block content %}
+<a href="{% url 'dashboard:home' %}" class="back-to-landing">&larr; Back to landing page</a>
 <div class="card" style="max-width: 380px; margin: 40px auto 0;">
   <h1 style="font-size:1.2rem; margin-top:0;">Create your Barathrum account</h1>
   <p class="text-muted">We'll send a one-time code to your phone number to confirm it's you.</p>
