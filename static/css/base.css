@@ -158,6 +158,14 @@ a { color: var(--color-accent-dark); }
   .app-shell:not(:has(.app-nav)) .app-main {
     margin: 0 auto;
   }
+  /* The landing page specifically (not login/signup/verify, which are narrow
+     forms and should stay that way) gets a much wider container so the hero
+     actually uses the screen instead of floating in a narrow centered column
+     with big empty margins either side. Scoped via :has() to .landing-hero so
+     no other no-sidebar page is affected. */
+  .app-main:has(.landing-hero) {
+    max-width: 1160px;
+  }
 }
 
 /* ---------- Cards ---------- */
@@ -395,10 +403,34 @@ a { color: var(--color-accent-dark); }
   padding: 32px 8px 24px;
   gap: 24px;
 }
+.landing-hero-logo {
+  /* Framed like the rest of the site's .card language (surface bg, border,
+     radius) plus a soft shadow and a subtle accent-tinted glow behind it, so
+     it reads as a deliberate design element instead of a bare <img> dropped
+     into empty space. The logo PNG itself is a dark navy square, which is why
+     the glow uses the same green accent as the rest of the UI rather than
+     trying to match the logo's own colors. */
+  position: relative;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(15, 107, 92, 0.08);
+}
+.landing-hero-logo::before {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  z-index: -1;
+  border-radius: calc(var(--radius) + 18px);
+  background: radial-gradient(circle, var(--color-green-bg) 0%, transparent 70%);
+}
 .landing-hero-logo img {
-  max-width: 180px;
+  display: block;
+  max-width: 220px;
   width: 100%;
   height: auto;
+  border-radius: calc(var(--radius) - 4px);
 }
 @media (min-width: 700px) {
   .landing-hero {
@@ -412,8 +444,9 @@ a { color: var(--color-accent-dark); }
     flex: 1 1 35%;
     display: flex;
     justify-content: center;
+    align-items: center;
   }
-  .landing-hero-logo img { max-width: 280px; }
+  .landing-hero-logo img { max-width: 340px; }
   .landing-hero-sub { margin: 0 0 24px; }
   .landing-cta-row { justify-content: flex-start; }
 }
