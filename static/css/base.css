@@ -378,8 +378,34 @@ a { color: var(--color-accent-dark); }
 
 /* ---------- Landing page (Session 31, STEP 2.5) ---------- */
 .landing-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   padding: 32px 8px 24px;
+  gap: 24px;
+}
+.landing-hero-logo img {
+  max-width: 180px;
+  width: 100%;
+  height: auto;
+}
+@media (min-width: 700px) {
+  .landing-hero {
+    flex-direction: row;
+    justify-content: space-between;
+    text-align: left;
+    gap: 32px;
+  }
+  .landing-hero-text { flex: 1 1 55%; }
+  .landing-hero-logo {
+    flex: 1 1 35%;
+    display: flex;
+    justify-content: center;
+  }
+  .landing-hero-logo img { max-width: 280px; }
+  .landing-hero-sub { margin: 0 0 24px; }
+  .landing-cta-row { justify-content: flex-start; }
 }
 .landing-hero h1 {
   font-size: 1.8rem;
