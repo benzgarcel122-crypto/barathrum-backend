@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Sign up — Barathrum{% endblock %}
 {% block content %}
+<a href="{% url 'dashboard:home' %}" class="back-to-landing">&larr; Back to landing page</a>
 <div class="card" style="max-width: 380px; margin: 40px auto 0;">
   <h1 style="font-size:1.2rem; margin-top:0;">Create your Barathrum account</h1>
   <p class="text-muted">We'll send a one-time code to your phone number to confirm it's you.</p>
 
   <form method="post" action="{% url 'signup' %}">
     {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_value|default:'' }}">
     <div class="field">
       <label for="id_phone_number">Phone number</label>
       <input type="tel" id="id_phone_number" name="phone_number" placeholder="09XXXXXXXXX"
@@ -23,7 +25,7 @@
   </form>
 
   <p class="text-muted mt-16" style="text-align:center;">
-    Already have an account? <a href="{% url 'login' %}">Log in</a>
+    Already have an account? <a href="{% url 'login' %}{% if next_value %}?next={{ next_value|urlencode }}{% endif %}">Log in</a>
   </p>
 </div>
 {% endblock %}

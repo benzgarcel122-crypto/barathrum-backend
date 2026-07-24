@@ -6,8 +6,8 @@
   <a href="{% url 'dashboard:home' %}" class="{% if active_nav == 'dashboard' %}active{% endif %}">
     <span class="nav-icon">🏠</span><span>Dashboard</span>
   </a>
-  <a href="{% url 'dashboard:add_machine' %}" class="{% if active_nav == 'add_machine' %}active{% endif %}">
-    <span class="nav-icon">➕</span><span>Add Machine</span>
+  <a href="{% url 'dashboard:generate_license' %}" class="{% if active_nav == 'generate_license' %}active{% endif %}">
+    <span class="nav-icon">🔑</span><span>Generate License Key</span>
   </a>
   <a href="{% url 'dashboard:account_settings' %}" class="{% if active_nav == 'account' %}active{% endif %}">
     <span class="nav-icon">👤</span><span>Account</span>

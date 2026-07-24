@@ -7,7 +7,9 @@ Account = get_user_model()
 
 
 class Session31LicenseDecoupleTests(TestCase):
-    """STEP 2.5 (Session 31): standalone license generation + landing page test cases."""
+    """STEP 2.5 (Session 31) / STEP 2.6 (Session 32): standalone license generation + landing
+    page test cases. Session 32 reversed ownership from "assigned at generation" to "assigned
+    at claim time" -- see the tests below that specifically cover that reversal."""
 
     def setUp(self):
         self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
@@ -24,23 +26,34 @@ class Session31LicenseDecoupleTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTemplateUsed(resp, "dashboard/home.html")
 
-    def test_tc1_generate_license_key(self):
+    def test_tc1_generate_license_key_is_ownerless(self):
+        """STEP 2.6 (Session 32): generating a license no longer assigns an owner -- account
+        stays None until some Machine claims it, regardless of who was logged in when it was
+        generated."""
         self.client.force_login(self.acc1)
         resp = self.client.post("/licenses/generate/")
         self.assertEqual(resp.status_code, 200)
-        lic = License.objects.get(account=self.acc1)
+        lic = License.objects.get()  # only one exists at this point in the test
+        self.assertIsNone(lic.account_id)
         self.assertFalse(lic.is_claimed)
         self.assertIn(lic.license_key.encode(), resp.content)
 
-    def test_tc2_add_machine_with_valid_own_key(self):
+    def test_tc2_any_account_can_claim_unclaimed_license(self):
+        """STEP 2.6 (Session 32) REVERSAL: any logged-in account can claim any unclaimed
+        license, regardless of who generated it -- the Session 31 "must match the generating
+        account" rule is gone. On claim, License.account is repurposed to record the claimant."""
+        lic = License.objects.create(account=None)  # simulates a key generated via the button
         self.client.force_login(self.acc1)
-        lic = License.objects.create(account=self.acc1)
-        resp = self.client.post("/machines/add/", {"license_key": lic.license_key, "nickname": "Corner"})
+        resp = self.client.post(
+            "/machines/add/", {"license_key": lic.license_key, "nickname": "Corner"}
+        )
         self.assertEqual(resp.status_code, 200)
         machine = Machine.objects.get(license_key=lic.license_key)
         self.assertEqual(machine.owner_id, self.acc1.id)
         self.assertEqual(machine.nickname, "Corner")
+        lic.refresh_from_db()
         self.assertTrue(lic.is_claimed)
+        self.assertEqual(lic.account_id, self.acc1.id)  # repurposed to record the claimant
 
     def test_tc3_garbage_key_rejected(self):
         self.client.force_login(self.acc1)
@@ -50,22 +63,31 @@ class Session31LicenseDecoupleTests(TestCase):
         self.assertEqual(Machine.objects.count(), before)
 
     def test_tc4_already_claimed_key_rejected(self):
-        self.client.force_login(self.acc1)
-        lic = License.objects.create(account=self.acc1)
+        """Post-claim protection still holds -- a key already attached to a Machine can't be
+        claimed again by anyone, even though the pre-claim ownership check is gone."""
+        lic = License.objects.create(account=None)
         Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+        self.client.force_login(self.acc2)  # a THIRD party, different from the original claimant
         resp = self.client.post("/machines/add/", {"license_key": lic.license_key, "nickname": "dup"})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(Machine.objects.filter(license_key=lic.license_key).count(), 1)
 
-    def test_cross_account_key_cannot_be_claimed(self):
-        lic2 = License.objects.create(account=self.acc2)
-        self.client.force_login(self.acc1)
-        self.client.post("/machines/add/", {"license_key": lic2.license_key, "nickname": "steal"})
-        self.assertFalse(Machine.objects.filter(license_key=lic2.license_key).exists())
+    def test_grandfathered_owned_licenses_are_not_reset(self):
+        """
+        Confirms the account -> nullable schema change (migration 0005) is additive only and
+        doesn't touch existing data: a License row that already has an account set (simulating
+        a pre-Session-32 row created under the old Session 31 rule) keeps that account exactly
+        as-is. Nothing in the model, the migration, or the surrounding app code ever nulls out
+        an existing account value -- it's only ever set (never cleared) by generate_license_view
+        (to None, for NEW rows) or by add_machine_view's claim logic (to the claimant).
+        """
+        lic = License.objects.create(account=self.acc1)
+        lic.refresh_from_db()
+        self.assertEqual(lic.account_id, self.acc1.id)
 
     def test_tc7_full_regression(self):
         self.client.force_login(self.acc1)
-        lic = License.objects.create(account=self.acc1)
+        lic = License.objects.create(account=None)
         machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
         for route in ["/", "/machines/add/", "/licenses/generate/", "/wallet/topup/", "/account/", "/download/"]:
             self.assertEqual(self.client.get(route).status_code, 200, route)

@@ -8,7 +8,7 @@
 
 <div class="card" style="max-width: 420px;">
   <p class="text-muted">
-    Paste a license key you've already generated for this account. Don't have one yet?
+    Paste any license key that hasn't been used on a machine yet. Don't have one?
     <a href="{% url 'dashboard:generate_license' %}">Generate a license key</a> first.
   </p>
   <form method="post" action="{% url 'dashboard:add_machine' %}">
@@ -18,7 +18,7 @@
       <input type="text" id="id_license_key" name="license_key" placeholder="e.g. 7F3K9M2QXZBT4RC"
              value="{{ license_key_input|default:'' }}" style="text-transform: uppercase;"
              autocomplete="off" required>
-      <div class="field-hint">Must be a key generated on this account that isn't attached to a machine yet.</div>
+      <div class="field-hint">Must be a real, unclaimed license key — not yet attached to a machine.</div>
     </div>
     <div class="field">
       <label for="id_nickname">Nickname (optional)</label>
