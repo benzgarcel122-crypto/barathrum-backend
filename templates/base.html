@@ -10,6 +10,7 @@
   <div class="app-shell">
     <div class="topbar">
       <span class="brand">Barathrum<span class="brand-sub">Software</span></span>
+      {% block topbar_actions %}{% endblock %}
     </div>
     {% block nav %}{% endblock %}
     <main class="app-main {% block main_class %}{% endblock %}">
