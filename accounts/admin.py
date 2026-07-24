@@ -8,7 +8,7 @@ from django.db import transaction as db_transaction
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 
-from .models import Account, OTPCode
+from .models import Account, OTPCode, PointTransfer
 
 # Groups (Django's built-in auth Group model) is registered automatically by
 # django.contrib.auth's own admin.py before this module loads (see INSTALLED_APPS order in
@@ -164,6 +164,24 @@ class OTPCodeAdmin(admin.ModelAdmin):
     list_filter = ["used"]
     search_fields = ["phone_number"]
     readonly_fields = ["phone_number", "code", "used", "failed_attempts", "created_at", "expires_at"]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(PointTransfer)
+class PointTransferAdmin(admin.ModelAdmin):
+    """
+    Trace/debug view only -- "did A actually send B points, when, how much" for tracing a
+    dispute between two operators. Never a control surface: PointTransfer rows are only ever
+    created by dashboard/views.py::send_points_view's atomic sender/receiver balance update;
+    manually adding or editing one here could create a ledger entry with no matching balance
+    change behind it, or silently misrepresent a real transfer. Fully read-only, no manual Add,
+    same pattern as OTPCodeAdmin above.
+    """
+    list_display = ["sender", "receiver", "amount", "created_at"]
+    search_fields = ["sender__phone_number", "receiver__phone_number"]
+    readonly_fields = ["sender", "receiver", "amount", "note", "created_at"]
 
     def has_add_permission(self, request):
         return False

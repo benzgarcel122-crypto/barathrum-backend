@@ -2,6 +2,7 @@ import re
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
@@ -150,3 +151,35 @@ class OTPCode(models.Model):
         # STEP 2.1. This print is the intentional stand-in the task asked for.
         print(f"[BARATHRUM OTP] phone_number={phone_number} code={otp.code} expires_at={otp.expires_at.isoformat()}")
         return otp
+
+
+class PointTransfer(models.Model):
+    """
+    Peer-to-peer wallet transfer: one operator sending some of their own balance_points to
+    another operator, identified by phone number. Distinct from the admin's one-directional
+    "Gift Points" action (accounts/admin.py::gift_points_view, superuser-only, no balance check)
+    and from a Machine top-up spend (dashboard/views.py, single-account debit only) -- this is
+    the first two-account balance movement in the app, so both sides of the transfer are recorded
+    on this single row rather than as two separate ledger entries.
+
+    ASSUMPTION FLAGGED: the optional `note` field was not yet confirmed by the PM at build time
+    (asked, no answer yet as of this task). Built in since it's low-cost and matches the Gift
+    Points precedent (which also has an optional reason/note field) -- trivial to drop via a
+    follow-up migration if the PM says no.
+    """
+
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_transfers"
+    )
+    receiver = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_transfers"
+    )
+    amount = models.PositiveIntegerField()
+    note = models.CharField(max_length=140, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.sender.phone_number} -> {self.receiver.phone_number}: ₱{self.amount}"

@@ -1,0 +1,63 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Send Points — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Send points</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">Current balance: <strong style="color: var(--color-text);">₱{{ balance_points }}</strong></p>
+  <p class="text-muted">Send points to another operator using their registered phone number.</p>
+
+  <form method="post" action="{% url 'dashboard:send_points' %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_recipient_phone">Recipient's phone number</label>
+      <input type="tel" id="id_recipient_phone" name="recipient_phone" placeholder="09XXXXXXXXX" required>
+    </div>
+    <div class="field">
+      <label for="id_amount">Amount (₱)</label>
+      <input type="number" id="id_amount" name="amount" min="1" step="1" required
+             placeholder="e.g. 50">
+    </div>
+    <div class="field">
+      <label for="id_note">Note (optional)</label>
+      <input type="text" id="id_note" name="note" maxlength="140" placeholder="e.g. for the coin float">
+    </div>
+    <button type="submit" class="btn btn-block">Send Points</button>
+  </form>
+</div>
+
+<div class="page-header">
+  <h1>Transfer history</h1>
+</div>
+
+<div class="card">
+  {% if transfers %}
+    <table style="width:100%; font-size:0.88rem; border-collapse: collapse;">
+      {% for t in transfers %}
+      <tr style="border-top:1px solid var(--color-border);">
+        {% if t.sender_id == request.user.id %}
+          <td style="padding:8px 0;">
+            Sent to {{ t.receiver.display_name|default:t.receiver.phone_number }}
+            {% if t.note %}<span class="text-muted">— {{ t.note }}</span>{% endif %}
+          </td>
+          <td style="padding:8px 0; text-align:right; color: var(--color-red);">-₱{{ t.amount }}</td>
+        {% else %}
+          <td style="padding:8px 0;">
+            Received from {{ t.sender.display_name|default:t.sender.phone_number }}
+            {% if t.note %}<span class="text-muted">— {{ t.note }}</span>{% endif %}
+          </td>
+          <td style="padding:8px 0; text-align:right; color: var(--color-green);">+₱{{ t.amount }}</td>
+        {% endif %}
+        <td style="padding:8px 0; text-align:right;" class="text-muted">{{ t.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="text-muted">No transfers yet.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

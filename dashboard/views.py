@@ -1,4 +1,3 @@
-
 from decimal import Decimal
  
 from django.contrib import messages
@@ -10,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
  
+from accounts.models import PointTransfer, normalize_phone_number
 from machines import paymongo_client
 from machines.models import BUNDLE_TYPE_CHOICES, License, Machine, Payment, Transaction
 from machines.paymongo_client import PayMongoAPIError
@@ -517,4 +517,96 @@ def account_settings_view(request):
         "dashboard/account_settings.html",
         {"active_nav": "account", "balance_points": request.user.balance_points},
     )
- 
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def send_points_view(request):
+    """
+    Peer-to-peer wallet transfer: the operator sends some of their own balance_points to another
+    operator, identified by phone number. New build (not a bug fix) -- previously the only ways
+    Account.balance_points ever moved were the admin's one-directional Gift Points action
+    (superuser-only, no balance check) and a Machine top-up spend (single-account debit only).
+    """
+    if request.method == "GET":
+        transfers = sorted(
+            list(request.user.sent_transfers.all()) + list(request.user.received_transfers.all()),
+            key=lambda t: t.created_at,
+            reverse=True,
+        )
+        return render(
+            request,
+            "dashboard/send_points.html",
+            {
+                "active_nav": "send_points",
+                "balance_points": request.user.balance_points,
+                "transfers": transfers,
+            },
+        )
+
+    recipient_phone = request.POST.get("recipient_phone", "")
+    note = request.POST.get("note", "")
+
+    try:
+        amount = int(request.POST.get("amount", "0"))
+    except ValueError:
+        amount = 0
+
+    if amount < 1:
+        messages.error(request, "Enter a number greater than zero.")
+        return redirect("dashboard:send_points")
+
+    try:
+        normalized_phone = normalize_phone_number(recipient_phone)
+    except ValueError:
+        messages.error(request, "That doesn't look like a valid PH mobile number.")
+        return redirect("dashboard:send_points")
+
+    recipient = Account.objects.filter(phone_number=normalized_phone).first()
+    if recipient is None:
+        messages.error(request, "No account with this phone number.")
+        return redirect("dashboard:send_points")
+
+    if recipient.pk == request.user.pk:
+        messages.error(request, "You can't send points to yourself.")
+        return redirect("dashboard:send_points")
+
+    if request.user.balance_points < amount:
+        messages.error(
+            request,
+            f"Not enough wallet balance for this transfer (need ₱{amount}, you have "
+            f"₱{request.user.balance_points}).",
+        )
+        return redirect("dashboard:send_points")
+
+    with db_transaction.atomic():
+        # Lock both accounts in a fixed (ascending pk) order regardless of who's sending vs.
+        # receiving here -- prevents a deadlock if two transfers between the same two accounts
+        # cross in opposite directions at nearly the same instant.
+        lower_pk, higher_pk = sorted([request.user.pk, recipient.pk])
+        first_locked = Account.objects.select_for_update().get(pk=lower_pk)
+        second_locked = Account.objects.select_for_update().get(pk=higher_pk)
+        sender_locked = first_locked if first_locked.pk == request.user.pk else second_locked
+        receiver_locked = second_locked if second_locked.pk == recipient.pk else first_locked
+
+        if sender_locked.balance_points < amount:
+            messages.error(request, "Not enough wallet balance for this transfer.")
+            return redirect("dashboard:send_points")
+
+        sender_locked.balance_points -= amount
+        sender_locked.save(update_fields=["balance_points"])
+
+        receiver_locked.balance_points += amount
+        receiver_locked.save(update_fields=["balance_points"])
+
+        PointTransfer.objects.create(
+            sender=sender_locked,
+            receiver=receiver_locked,
+            amount=amount,
+            note=note.strip()[:140],
+        )
+
+    messages.success(
+        request, f"Sent ₱{amount} to {recipient.display_name or recipient.phone_number}."
+    )
+    return redirect("dashboard:send_points")
