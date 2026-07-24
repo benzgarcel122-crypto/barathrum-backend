@@ -8,6 +8,7 @@
   <form method="post" action="{% url 'verify' %}">
     {% csrf_token %}
     <input type="hidden" name="phone_number" value="{{ phone_number }}">
+    <input type="hidden" name="next" value="{{ next_value|default:'' }}">
     <div class="field">
       <label for="id_code">6-digit code</label>
       <input type="text" id="id_code" name="code" inputmode="numeric" maxlength="6"
