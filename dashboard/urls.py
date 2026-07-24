@@ -13,6 +13,7 @@ urlpatterns = [
     path("machines/<int:machine_id>/", views.machine_detail_view, name="machine_detail"),
     path("machines/<int:machine_id>/topup/", views.topup_view, name="topup"),
     path("wallet/topup/", views.wallet_topup_view, name="wallet_topup"),
+    path("send-points/", views.send_points_view, name="send_points"),
     path("payments/return/", views.payment_return_view, name="payment_return"),
     path("payments/cancel/", views.payment_cancel_view, name="payment_cancel"),
     path("account/", views.account_settings_view, name="account_settings"),
