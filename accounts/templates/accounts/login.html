@@ -8,6 +8,7 @@
 
   <form method="post" action="{% url 'login' %}">
     {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_value|default:'' }}">
     <div class="field">
       <label for="id_phone_number">Phone number</label>
       <input type="tel" id="id_phone_number" name="phone_number" placeholder="09XXXXXXXXX"
@@ -19,7 +20,7 @@
   </form>
 
   <p class="text-muted mt-16" style="text-align:center;">
-    New to Barathrum? <a href="{% url 'signup' %}">Create an account</a>
+    New to Barathrum? <a href="{% url 'signup' %}{% if next_value %}?next={{ next_value|urlencode }}{% endif %}">Create an account</a>
   </p>
 </div>
 {% endblock %}
