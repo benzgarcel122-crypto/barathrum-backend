@@ -1,3 +1,4 @@
+
 from decimal import Decimal
  
 from django.contrib import messages
@@ -161,7 +162,7 @@ def generate_license_view(request):
     if request.method == "GET":
         return render(request, "dashboard/generate_license.html", {"active_nav": "generate_license"})
  
-    license_obj = License.objects.create(account=None)
+    license_obj = License.objects.create(account=None, generated_by=request.user)
     return render(
         request,
         "dashboard/license_generated.html",
