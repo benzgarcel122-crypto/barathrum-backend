@@ -9,6 +9,9 @@
   <a href="{% url 'dashboard:generate_license' %}" class="{% if active_nav == 'generate_license' %}active{% endif %}">
     <span class="nav-icon">🔑</span><span>Generate License Key</span>
   </a>
+  <a href="{% url 'dashboard:send_points' %}" class="{% if active_nav == 'send_points' %}active{% endif %}">
+    <span class="nav-icon">💸</span><span>Send Points</span>
+  </a>
   <a href="{% url 'dashboard:account_settings' %}" class="{% if active_nav == 'account' %}active{% endif %}">
     <span class="nav-icon">👤</span><span>Account</span>
   </a>
