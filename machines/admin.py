@@ -1,8 +1,8 @@
 from django.contrib import admin
-
+ 
 from .models import License, Machine, Payment, Transaction
-
-
+ 
+ 
 class TransactionInline(admin.TabularInline):
     """
     Same "ledger, not a control surface" rule as TransactionAdmin below applies here too --
@@ -13,11 +13,11 @@ class TransactionInline(admin.TabularInline):
     extra = 0
     fields = ["bundle_type", "days_added", "amount_paid_pesos", "created_at"]
     readonly_fields = ["bundle_type", "days_added", "amount_paid_pesos", "created_at"]
-
+ 
     def has_add_permission(self, request, obj=None):
         return False
-
-
+ 
+ 
 @admin.register(Machine)
 class MachineAdmin(admin.ModelAdmin):
     list_display = [
@@ -33,7 +33,7 @@ class MachineAdmin(admin.ModelAdmin):
     search_fields = ["license_key", "nickname", "owner__phone_number"]
     readonly_fields = ["license_key", "created_at"]
     inlines = [TransactionInline]
-
+ 
     # "Add" and "Change" both stay available here -- genuinely needed for support cases (e.g.
     # "my Add Machine keeps rejecting my key, just set it up for me"). But both bypass the app's
     # own claim validation entirely (no license-key-exists check, no already-claimed check), so
@@ -66,8 +66,8 @@ class MachineAdmin(admin.ModelAdmin):
             },
         ),
     )
-
-
+ 
+ 
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     """
@@ -79,17 +79,17 @@ class TransactionAdmin(admin.ModelAdmin):
     list_filter = ["bundle_type"]
     search_fields = ["machine__license_key"]
     readonly_fields = ["machine", "bundle_type", "days_added", "amount_paid_pesos", "created_at"]
-
+ 
     def has_add_permission(self, request):
         return False
-
-
+ 
+ 
 @admin.register(License)
 class LicenseAdmin(admin.ModelAdmin):
-    list_display = ["license_key", "account", "is_claimed", "created_at"]
-    search_fields = ["license_key", "account__phone_number"]
-    readonly_fields = ["license_key", "created_at"]
-
+    list_display = ["license_key", "generated_by", "account", "is_claimed", "created_at"]
+    search_fields = ["license_key", "account__phone_number", "generated_by__phone_number"]
+    readonly_fields = ["license_key", "generated_by", "created_at"]
+ 
     def get_fields(self, request, obj=None):
         """
         STEP 2.6 (Session 32): a License now starts ownerless -- account is only ever set once a
@@ -97,16 +97,20 @@ class LicenseAdmin(admin.ModelAdmin):
         "Add" form no longer offers an Account selector at all, so a manually-added License
         starts unclaimed just like every other one. "Change" still shows account (now optional)
         for the rare support case of manually correcting who claimed a key.
+ 
+        Session 36: generated_by only appears on the Change page, not Add -- a License created
+        directly through admin has no real "generator" in the app-usage sense this field tracks,
+        so there's nothing meaningful to show for it on the Add form.
         """
         if obj is None:
             return ["license_key", "created_at"]
-        return ["license_key", "account", "created_at"]
-
+        return ["license_key", "generated_by", "account", "created_at"]
+ 
     @admin.display(boolean=True)
     def is_claimed(self, obj):
         return obj.is_claimed
-
-
+ 
+ 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
     """
@@ -125,6 +129,7 @@ class PaymentAdmin(admin.ModelAdmin):
     readonly_fields = [
         "account", "amount_pesos", "paymongo_checkout_session_id", "status", "created_at", "paid_at",
     ]
-
+ 
     def has_add_permission(self, request):
         return False
+ 
