@@ -56,6 +56,17 @@ a { color: var(--color-accent-dark); }
   color: var(--color-text-muted);
   margin-left: 6px;
 }
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+@media (max-width: 480px) {
+  /* Narrow phones: hide the "Software" subtitle to make room for the two buttons rather than
+     letting them wrap onto a second line inside the topbar. */
+  .topbar .brand-sub { display: none; }
+}
 
 /* ---------- Main content ---------- */
 .app-main {
