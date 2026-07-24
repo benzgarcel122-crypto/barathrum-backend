@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
+from accounts.models import PointTransfer
 from machines.models import License, Machine
 
 Account = get_user_model()
@@ -126,3 +127,107 @@ class Session31LicenseDecoupleTests(TestCase):
         resp = self.client.post("/logout/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp.url)
+
+
+class SendPointsTests(TestCase):
+    """Peer-to-peer wallet transfer, test cases per the Send Points task spec."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=500
+        )
+        self.acc2 = Account.objects.create_user(
+            phone_number="09179876543", display_name="Op Two", balance_points=0
+        )
+
+    def test_tc1_successful_transfer(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/",
+            {"recipient_phone": "09179876543", "amount": "100", "note": "float"},
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.acc1.refresh_from_db()
+        self.acc2.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 400)
+        self.assertEqual(self.acc2.balance_points, 100)
+        transfer = PointTransfer.objects.get()
+        self.assertEqual(transfer.sender_id, self.acc1.id)
+        self.assertEqual(transfer.receiver_id, self.acc2.id)
+        self.assertEqual(transfer.amount, 100)
+
+        # Both sides see it in their own dashboard history.
+        resp_sender = self.client.get("/send-points/")
+        self.assertContains(resp_sender, "Op Two")
+        self.client.force_login(self.acc2)
+        resp_receiver = self.client.get("/send-points/")
+        self.assertContains(resp_receiver, "Op One")
+
+    def test_tc2_insufficient_balance_rejected(self):
+        self.acc1.balance_points = 0
+        self.acc1.save(update_fields=["balance_points"])
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "09179876543", "amount": "1"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.acc1.refresh_from_db()
+        self.acc2.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 0)
+        self.assertEqual(self.acc2.balance_points, 0)
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_tc3_cannot_send_to_self(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "09171234567", "amount": "50"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 500)
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_tc4_unknown_recipient_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "09990001111", "amount": "50"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 500)
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_tc5_zero_amount_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "09179876543", "amount": "0"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_tc5b_negative_amount_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "09179876543", "amount": "-5"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_invalid_phone_number_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/", {"recipient_phone": "12345", "amount": "50"}
+        )
+        self.assertRedirects(resp, "/send-points/")
+        self.assertEqual(PointTransfer.objects.count(), 0)
+
+    def test_send_points_requires_login(self):
+        resp = self.client.get("/send-points/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp.url)
+
+    def test_send_points_nav_link_present(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/")
+        self.assertContains(resp, "Send Points")
+        self.assertContains(resp, "/send-points/")
