@@ -31,6 +31,8 @@ class Session31LicenseDecoupleTests(TestCase):
         """STEP 2.6 (Session 32): generating a license no longer assigns an owner -- account
         stays None until some Machine claims it, regardless of who was logged in when it was
         generated."""
+        self.acc1.balance_points = 20  # covers the license generation fee added later
+        self.acc1.save(update_fields=["balance_points"])
         self.client.force_login(self.acc1)
         resp = self.client.post("/licenses/generate/")
         self.assertEqual(resp.status_code, 200)
@@ -231,3 +233,50 @@ class SendPointsTests(TestCase):
         resp = self.client.get("/")
         self.assertContains(resp, "Send Points")
         self.assertContains(resp, "/send-points/")
+
+
+class LicenseGenerationFeeTests(TestCase):
+    """Anti-abuse fee on generate_license_view: LICENSE_GENERATION_FEE points deducted from the
+    generating operator's own wallet balance, per this task's numbered test cases."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=100
+        )
+
+    def test_tc1_sufficient_balance_deducts_fee_and_creates_license(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/licenses/generate/")
+        self.assertEqual(resp.status_code, 200)
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 80)  # 100 - LICENSE_GENERATION_FEE(20)
+        lic = License.objects.get()
+        self.assertIsNone(lic.account_id)
+        self.assertEqual(lic.generated_by_id, self.acc1.id)
+
+    def test_tc2_insufficient_balance_rejected(self):
+        self.acc1.balance_points = 10
+        self.acc1.save(update_fields=["balance_points"])
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/licenses/generate/")
+        self.assertRedirects(resp, "/licenses/generate/")
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 10)
+        self.assertEqual(License.objects.count(), 0)
+
+    def test_tc3_exact_fee_balance_succeeds_and_zeroes_out(self):
+        self.acc1.balance_points = 20
+        self.acc1.save(update_fields=["balance_points"])
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/licenses/generate/")
+        self.assertEqual(resp.status_code, 200)
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 0)
+        self.assertEqual(License.objects.count(), 1)
+
+    def test_tc5_get_page_shows_fee_and_balance(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/licenses/generate/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "20 points")
+        self.assertContains(resp, "100")  # current balance
