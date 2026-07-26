@@ -12,6 +12,8 @@
     account — until you (or whoever ends up with it) paste it into
     <a href="{% url 'dashboard:add_machine' %}">Add Machine</a>.
   </p>
+  <p class="text-muted">Generating a license key costs <strong>{{ fee }} points</strong>. Your
+    current wallet balance: <strong>{{ balance_points }}</strong>.</p>
   <form method="post" action="{% url 'dashboard:generate_license' %}">
     {% csrf_token %}
     <button type="submit" class="btn btn-block">Generate License Key</button>
