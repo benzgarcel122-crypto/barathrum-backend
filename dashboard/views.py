@@ -7,11 +7,19 @@ from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
  
 from accounts.models import PointTransfer, normalize_phone_number
 from machines import paymongo_client
-from machines.models import BUNDLE_TYPE_CHOICES, License, Machine, Payment, Transaction
+from machines.models import (
+    BUNDLE_TYPE_CHOICES,
+    UNCLAIMED_LICENSE_LIFETIME_DAYS,
+    License,
+    Machine,
+    Payment,
+    Transaction,
+)
 from machines.paymongo_client import PayMongoAPIError
  
 Account = get_user_model()
@@ -170,6 +178,23 @@ def generate_license_view(request):
     pre-check + locked re-check discipline topup_view and send_points_view already use.
     """
     if request.method == "GET":
+        history = []
+        for lic in request.user.generated_licenses.order_by("-created_at"):
+            if lic.is_claimed:
+                machine = Machine.objects.filter(license_key=lic.license_key).first()
+                history.append({
+                    "license": lic,
+                    "status": "claimed",
+                    "machine": machine,
+                })
+            else:
+                age_days = (timezone.now() - lic.created_at).days
+                days_until_expiry = UNCLAIMED_LICENSE_LIFETIME_DAYS - age_days
+                history.append({
+                    "license": lic,
+                    "status": "unclaimed",
+                    "days_until_expiry": days_until_expiry,
+                })
         return render(
             request,
             "dashboard/generate_license.html",
@@ -177,6 +202,7 @@ def generate_license_view(request):
                 "active_nav": "generate_license",
                 "fee": LICENSE_GENERATION_FEE,
                 "balance_points": request.user.balance_points,
+                "history": history,
             },
         )
 
