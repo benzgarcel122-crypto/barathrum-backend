@@ -7,7 +7,6 @@ from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.views.decorators.http import require_http_methods
  
 from accounts.models import PointTransfer, normalize_phone_number
@@ -19,6 +18,7 @@ from machines.models import (
     Machine,
     Payment,
     Transaction,
+    calendar_days_since,
 )
 from machines.paymongo_client import PayMongoAPIError
  
@@ -188,7 +188,7 @@ def generate_license_view(request):
                     "machine": machine,
                 })
             else:
-                age_days = (timezone.now() - lic.created_at).days
+                age_days = calendar_days_since(lic.created_at)
                 days_until_expiry = UNCLAIMED_LICENSE_LIFETIME_DAYS - age_days
                 history.append({
                     "license": lic,
