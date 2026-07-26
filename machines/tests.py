@@ -55,3 +55,27 @@ class CleanupUnclaimedLicensesTests(TestCase):
         lic = License.objects.create(account=None, generated_by=self.acc1)
         call_command("cleanup_unclaimed_licenses", stdout=StringIO())
         self.assertTrue(License.objects.filter(pk=lic.pk).exists())
+
+
+class CalendarDaysSinceTests(TestCase):
+    """calendar_days_since() ticks over at PH midnight, not after a full 24 elapsed hours --
+    this is the actual behavior change requested (countdown/deletion based on PH calendar dates,
+    not exact elapsed-hours math)."""
+
+    def test_ticks_over_at_midnight_not_after_24_full_hours(self):
+        from machines.models import calendar_days_since
+
+        acc = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+        lic = License.objects.create(account=None, generated_by=acc)
+
+        # Simulate: license was created at 11:59 PM PH time yesterday. Less than 24 hours will
+        # have elapsed by "now" (a few minutes), but it's already a different PH calendar date --
+        # so calendar_days_since should report 1, not 0.
+        ph_now = timezone.localtime(timezone.now())
+        yesterday_2359_ph = (ph_now - timedelta(days=1)).replace(
+            hour=23, minute=59, second=0, microsecond=0
+        )
+        License.objects.filter(pk=lic.pk).update(created_at=yesterday_2359_ph)
+        lic.refresh_from_db()
+
+        self.assertEqual(calendar_days_since(lic.created_at), 1)
