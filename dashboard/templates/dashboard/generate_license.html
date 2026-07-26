@@ -20,4 +20,39 @@
   </form>
 </div>
 
+<div class="page-header">
+  <h1>License generation history</h1>
+</div>
+
+<div class="card">
+  <p class="text-muted">Every license key you've generated, including recovering a key you didn't
+    copy down. Deleted (expired-unclaimed) licenses no longer appear here — that's expected.</p>
+  {% if history %}
+    <table style="width:100%; font-size:0.88rem; border-collapse: collapse;">
+      {% for entry in history %}
+      <tr style="border-top:1px solid var(--color-border);">
+        <td style="padding:8px 0; font-family: monospace;">{{ entry.license.license_key }}</td>
+        <td style="padding:8px 0;" class="text-muted">{{ entry.license.created_at }}</td>
+        {% if entry.status == "claimed" %}
+          <td style="padding:8px 0; text-align:right; color: var(--color-green);">
+            Claimed
+            {% if entry.machine %}
+              — {{ entry.machine.nickname|default:"(no nickname)" }},
+              {{ entry.machine.days_remaining }} day{{ entry.machine.days_remaining|pluralize }} left
+            {% endif %}
+          </td>
+        {% else %}
+          <td style="padding:8px 0; text-align:right;
+              color: {% if entry.days_until_expiry <= 5 %}var(--color-red){% else %}var(--color-text-muted){% endif %};">
+            Unclaimed — expires in {{ entry.days_until_expiry }} day{{ entry.days_until_expiry|pluralize }}
+          </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="text-muted">You haven't generated any license keys yet.</p>
+  {% endif %}
+</div>
+
 {% endblock %}
