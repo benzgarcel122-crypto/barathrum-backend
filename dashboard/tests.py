@@ -280,3 +280,36 @@ class LicenseGenerationFeeTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "20 points")
         self.assertContains(resp, "100")  # current balance
+
+
+class LicenseGenerationHistoryTests(TestCase):
+    """History section on generate_license.html: shows the operator's own generated licenses,
+    correctly distinguishing claimed vs. unclaimed, and never another operator's licenses."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=100
+        )
+        self.acc2 = Account.objects.create_user(
+            phone_number="09179876543", display_name="Op Two", balance_points=100
+        )
+
+    def test_tc4_history_shows_own_licenses_claimed_and_unclaimed_only(self):
+        unclaimed_lic = License.objects.create(account=None, generated_by=self.acc1)
+        claimed_lic = License.objects.create(account=None, generated_by=self.acc1)
+        Machine.objects.create(
+            license_key=claimed_lic.license_key, owner=self.acc1, nickname="Front Desk Box"
+        )
+        other_op_lic = License.objects.create(account=None, generated_by=self.acc2)
+
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/licenses/generate/")
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertContains(resp, unclaimed_lic.license_key)
+        self.assertContains(resp, "Unclaimed")
+        self.assertContains(resp, claimed_lic.license_key)
+        self.assertContains(resp, "Claimed")
+        self.assertContains(resp, "Front Desk Box")
+        # Never another operator's license.
+        self.assertNotContains(resp, other_op_lic.license_key)
