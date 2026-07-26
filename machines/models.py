@@ -2,6 +2,7 @@ import secrets
  
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
  
 # Character set for license keys: uppercase A-Z and digits 2-9, excluding characters that are
 # visually ambiguous when hand-typed: 0/O, 1/I/l. (Digit '1' and lowercase 'l' are excluded by
@@ -25,6 +26,28 @@ BUNDLE_TYPE_CHOICES = [
 # each operator "expires in N days" for their own unclaimed licenses) -- defined once here so
 # both stay in sync rather than hardcoding 20 in two separate files.
 UNCLAIMED_LICENSE_LIFETIME_DAYS = 20
+
+
+def calendar_days_since(created_at):
+    """
+    Calendar-day age of a datetime, measured in PH (Asia/Manila) calendar DATES rather than
+    exact elapsed hours -- ticks over at PH midnight, not 24 hours after the exact minute the
+    row was created. E.g. a License created at 11:59 PM PH time is already "1 day old" one
+    minute later, at 12:00 AM PH time the next calendar date -- it does NOT need a full 24 hours
+    to elapse first. This is intentionally simpler to reason about (a single date subtraction,
+    no hour/minute precision) and gives operators a countdown that only changes once per day, at
+    a predictable moment, rather than ticking continuously.
+
+    Used by BOTH the unclaimed-license expiry countdown (dashboard) and the
+    cleanup_unclaimed_licenses command's actual deletion decision, so the displayed countdown
+    and the real deletion trigger a license eventually hits always agree with each other.
+
+    settings.TIME_ZONE is already 'Asia/Manila' (with USE_TZ=True), so timezone.localtime()
+    below correctly converts the UTC-stored created_at into PH local time before taking .date().
+    """
+    today_ph_date = timezone.localtime(timezone.now()).date()
+    created_ph_date = timezone.localtime(created_at).date()
+    return (today_ph_date - created_ph_date).days
  
  
 def generate_license_key():
