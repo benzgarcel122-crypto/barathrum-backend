@@ -19,6 +19,12 @@ BUNDLE_TYPE_CHOICES = [
     ("300day", "300-day bundle"),
     ("1000day", "1000-day bundle"),
 ]
+
+# Shared between machines/management/commands/cleanup_unclaimed_licenses.py (which deletes any
+# License unclaimed past this age) and dashboard/views.py's generate_license_view (which shows
+# each operator "expires in N days" for their own unclaimed licenses) -- defined once here so
+# both stay in sync rather than hardcoding 20 in two separate files.
+UNCLAIMED_LICENSE_LIFETIME_DAYS = 20
  
  
 def generate_license_key():
@@ -206,4 +212,3 @@ class Payment(models.Model):
  
     def __str__(self):
         return f"Payment({self.account.phone_number}, ₱{self.amount_pesos}, {self.status})"
- 
