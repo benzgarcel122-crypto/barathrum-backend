@@ -1,8 +1,10 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
+from django.utils import timezone
 
 from accounts.models import PointTransfer
-from machines.models import License, Machine
+from machines.models import License, Machine, Transaction
 
 Account = get_user_model()
 
@@ -34,7 +36,10 @@ class Session31LicenseDecoupleTests(TestCase):
         self.acc1.balance_points = 20  # covers the license generation fee added later
         self.acc1.save(update_fields=["balance_points"])
         self.client.force_login(self.acc1)
-        resp = self.client.post("/licenses/generate/")
+        resp = self.client.post(
+            "/licenses/generate/",
+            {"recovery_password": "recover123", "recovery_password_confirm": "recover123"},
+        )
         self.assertEqual(resp.status_code, 200)
         lic = License.objects.get()  # only one exists at this point in the test
         self.assertIsNone(lic.account_id)
@@ -246,7 +251,10 @@ class LicenseGenerationFeeTests(TestCase):
 
     def test_tc1_sufficient_balance_deducts_fee_and_creates_license(self):
         self.client.force_login(self.acc1)
-        resp = self.client.post("/licenses/generate/")
+        resp = self.client.post(
+            "/licenses/generate/",
+            {"recovery_password": "recover123", "recovery_password_confirm": "recover123"},
+        )
         self.assertEqual(resp.status_code, 200)
         self.acc1.refresh_from_db()
         self.assertEqual(self.acc1.balance_points, 80)  # 100 - LICENSE_GENERATION_FEE(20)
@@ -268,7 +276,10 @@ class LicenseGenerationFeeTests(TestCase):
         self.acc1.balance_points = 20
         self.acc1.save(update_fields=["balance_points"])
         self.client.force_login(self.acc1)
-        resp = self.client.post("/licenses/generate/")
+        resp = self.client.post(
+            "/licenses/generate/",
+            {"recovery_password": "recover123", "recovery_password_confirm": "recover123"},
+        )
         self.assertEqual(resp.status_code, 200)
         self.acc1.refresh_from_db()
         self.assertEqual(self.acc1.balance_points, 0)
@@ -313,3 +324,208 @@ class LicenseGenerationHistoryTests(TestCase):
         self.assertContains(resp, "Front Desk Box")
         # Never another operator's license.
         self.assertNotContains(resp, other_op_lic.license_key)
+
+
+class ReleaseLicenseFeatureTests(TestCase):
+    """
+    STEP 2.7 items 2-4 (Session 48 design): recovery-password-gated License Release, mapped
+    directly to this task's numbered TEST CASES 1-10 (see Developer prompt).
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=100
+        )
+        self.acc2 = Account.objects.create_user(
+            phone_number="09179876543", display_name="Op Two", balance_points=100
+        )
+
+    # TC1: Generate a license without filling either password field -> rejected, no fee
+    # deducted, no License row created.
+    def test_tc1_generate_without_password_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/licenses/generate/")
+        self.assertRedirects(resp, "/licenses/generate/")
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 100)
+        self.assertEqual(License.objects.count(), 0)
+
+    # TC2: Generate a license with mismatched password/confirm -> rejected, no fee deducted.
+    def test_tc2_generate_with_mismatched_passwords_rejected(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/licenses/generate/",
+            {"recovery_password": "recover123", "recovery_password_confirm": "different456"},
+        )
+        self.assertRedirects(resp, "/licenses/generate/")
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 100)
+        self.assertEqual(License.objects.count(), 0)
+
+    # TC3: Generate a license correctly -> License created with a hashed (not plaintext)
+    # recovery_password_hash, fee deducted as before.
+    def test_tc3_generate_correctly_hashes_password_and_deducts_fee(self):
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/licenses/generate/",
+            {"recovery_password": "recover123", "recovery_password_confirm": "recover123"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 80)  # 100 - LICENSE_GENERATION_FEE(20)
+        lic = License.objects.get()
+        self.assertNotEqual(lic.recovery_password_hash, "recover123")
+        self.assertNotEqual(lic.recovery_password_hash, "")
+        self.assertTrue(check_password("recover123", lic.recovery_password_hash))
+
+    # TC4: Claim a brand-new (never-claimed) license via Add Machine -> works exactly as
+    # before, Machine created, no password prompt anywhere in this flow.
+    def test_tc4_claim_brand_new_license_unchanged(self):
+        lic = License.objects.create(account=None, recovery_password_hash=make_password("pw"))
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/machines/add/", {"license_key": lic.license_key, "nickname": "Corner"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        machine = Machine.objects.get(license_key=lic.license_key)
+        self.assertEqual(machine.owner_id, self.acc1.id)
+        self.assertIsNone(machine.removed_at)
+        self.assertNotContains(resp, "password")
+
+    # TC5: Own a claimed machine, go to Release License, enter the WRONG password -> rejected,
+    # machine still claimed and still visible on the dashboard, release_failed_attempts
+    # incremented.
+    def test_tc5_wrong_password_rejected_and_increments_counter(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key, nickname="Box A")
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "wrongpw"})
+        self.assertEqual(resp.status_code, 200)
+
+        machine.refresh_from_db()
+        lic.refresh_from_db()
+        self.assertIsNone(machine.removed_at)
+        self.assertEqual(lic.release_failed_attempts, 1)
+
+        home_resp = self.client.get("/")
+        self.assertContains(home_resp, "Box A")
+
+    # TC6: Repeat wrong password 5 times -> 6th attempt (even if correct) is blocked by the
+    # 15-minute lockout message; confirm release_locked_until is set in the DB.
+    def test_tc6_five_wrong_attempts_locks_out_even_correct_password(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        self.client.force_login(self.acc1)
+        for _ in range(5):
+            self.client.post(f"/machines/{machine.id}/release/", {"password": "wrongpw"})
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.release_failed_attempts, 0)  # reset when lockout triggers
+        self.assertIsNotNone(lic.release_locked_until)
+        self.assertGreater(lic.release_locked_until, timezone.now())
+
+        # 6th attempt, even with the CORRECT password, is blocked by the lockout window.
+        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+        self.assertContains(resp, "Too many incorrect attempts")
+        machine.refresh_from_db()
+        self.assertIsNone(machine.removed_at)
+
+    # TC7: Own a claimed machine with days_remaining > 0 and existing Transaction history,
+    # release it with the CORRECT password -> machine disappears from dashboard home
+    # immediately; days_remaining and Transaction rows unchanged; Machine.removed_at set.
+    def test_tc7_correct_password_releases_and_preserves_balance_and_history(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=42
+        )
+        Transaction.objects.create(
+            machine=machine, bundle_type="30day", days_added=30, amount_paid_pesos=27
+        )
+        Transaction.objects.create(
+            machine=machine, bundle_type="60day", days_added=60, amount_paid_pesos=52
+        )
+        txn_count_before = Transaction.objects.filter(machine=machine).count()
+        days_before = machine.days_remaining
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+        self.assertRedirects(resp, "/")
+
+        machine.refresh_from_db()
+        self.assertIsNotNone(machine.removed_at)
+        self.assertEqual(machine.days_remaining, days_before)
+        self.assertEqual(Transaction.objects.filter(machine=machine).count(), txn_count_before)
+
+        home_resp = self.client.get("/")
+        self.assertNotContains(home_resp, "Box A")
+
+    # TC8: Re-add that same license key via Add Machine (different or same account) -> confirm
+    # it's the SAME Machine row being reactivated (same Machine.id, not a new row),
+    # days_remaining and Transaction history are exactly what they were before release,
+    # removed_at is now NULL, owner is the new claimant.
+    def test_tc8_reclaim_after_release_reactivates_same_machine_row(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=42
+        )
+        Transaction.objects.create(
+            machine=machine, bundle_type="30day", days_added=30, amount_paid_pesos=27
+        )
+        original_machine_id = machine.id
+        txn_count_before = Transaction.objects.filter(machine=machine).count()
+        days_before = machine.days_remaining
+
+        self.client.force_login(self.acc1)
+        self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+
+        # A different account reclaims it.
+        self.client.force_login(self.acc2)
+        resp = self.client.post(
+            "/machines/add/", {"license_key": lic.license_key, "nickname": "Reclaimed Box"}
+        )
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertEqual(Machine.objects.filter(license_key=lic.license_key).count(), 1)
+        reactivated = Machine.objects.get(license_key=lic.license_key)
+        self.assertEqual(reactivated.id, original_machine_id)
+        self.assertIsNone(reactivated.removed_at)
+        self.assertEqual(reactivated.owner_id, self.acc2.id)
+        self.assertEqual(reactivated.days_remaining, days_before)
+        self.assertEqual(Transaction.objects.filter(machine=reactivated).count(), txn_count_before)
+
+    # TC9: Regression -- a released machine no longer appears for its former owner in
+    # home_view, machine_detail_view (404), topup_view (404), and bulk_topup_view.
+    def test_tc9_released_machine_excluded_from_owner_views(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=10
+        )
+        machine_id = machine.id
+
+        self.client.force_login(self.acc1)
+        self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+
+        home_resp = self.client.get("/")
+        self.assertNotContains(home_resp, "Box A")
+
+        detail_resp = self.client.get(f"/machines/{machine_id}/")
+        self.assertEqual(detail_resp.status_code, 404)
+
+        topup_resp = self.client.get(f"/machines/{machine_id}/topup/")
+        self.assertEqual(topup_resp.status_code, 404)
+
+        bulk_resp = self.client.get(f"/machines/bulk-topup/?machine_id={machine_id}")
+        self.assertRedirects(bulk_resp, "/")  # bulk_topup_view: no matching machines -> redirect
+
+    # Supporting check for TC5/TC9: only the machine's owner can see/reach the Release License
+    # action at all -- another logged-in account gets a 404, same pattern as every other
+    # owner-scoped Machine view in this file.
+    def test_release_license_view_404s_for_non_owner(self):
+        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        self.client.force_login(self.acc2)
+        resp = self.client.get(f"/machines/{machine.id}/release/")
+        self.assertEqual(resp.status_code, 404)
