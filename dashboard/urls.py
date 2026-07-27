@@ -12,6 +12,7 @@ urlpatterns = [
     path("machines/bulk-topup/", views.bulk_topup_view, name="bulk_topup"),
     path("machines/<int:machine_id>/", views.machine_detail_view, name="machine_detail"),
     path("machines/<int:machine_id>/topup/", views.topup_view, name="topup"),
+    path("machines/<int:machine_id>/release/", views.release_license_view, name="release_license"),
     path("wallet/topup/", views.wallet_topup_view, name="wallet_topup"),
     path("send-points/", views.send_points_view, name="send_points"),
     path("payments/return/", views.payment_return_view, name="payment_return"),
