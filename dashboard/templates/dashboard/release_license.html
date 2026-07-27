@@ -1,0 +1,37 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Release License — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Release license</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">
+    Enter this license's recovery password to release it. It will become claimable on any box,
+    and this machine's balance and history will be preserved.
+  </p>
+  <table style="width:100%; margin-bottom:16px; font-size:0.9rem; border-collapse: collapse;">
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Machine</td>
+      <td style="text-align:right;">{{ machine.nickname|default:"(no nickname)" }}</td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">License key</td>
+      <td style="text-align:right; font-family: monospace;">{{ machine.license_key }}</td>
+    </tr>
+  </table>
+  <form method="post" action="{% url 'dashboard:release_license' machine.id %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_password">Recovery password</label>
+      <input type="password" id="id_password" name="password" autocomplete="off" required>
+    </div>
+    <button type="submit" class="btn btn-block">Release License</button>
+  </form>
+  <p class="text-muted mt-16" style="text-align:center;">
+    <a href="{% url 'dashboard:machine_detail' machine.id %}">Cancel</a>
+  </p>
+</div>
+
+{% endblock %}
