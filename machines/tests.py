@@ -79,3 +79,79 @@ class CalendarDaysSinceTests(TestCase):
         lic.refresh_from_db()
 
         self.assertEqual(calendar_days_since(lic.created_at), 1)
+
+
+class DecrementMachineDaysTests(TestCase):
+    """decrement_machine_days management command, test cases per the STEP 2.7 task spec."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def test_tc1_machine_with_days_remaining_is_decremented_by_one(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=10)
+        call_command("decrement_machine_days", stdout=StringIO())
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 9)
+
+    def test_tc2_machine_at_zero_stays_at_zero(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        call_command("decrement_machine_days", stdout=StringIO())
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 0)
+
+    def test_tc3_double_fire_same_day_does_not_double_decrement(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=10)
+        call_command("decrement_machine_days", stdout=StringIO())
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 9)
+
+        # Immediate second run, same PH calendar day -- must NOT decrement again.
+        out = StringIO()
+        call_command("decrement_machine_days", stdout=out)
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 9)
+        self.assertIn("Already ran today", out.getvalue())
+
+    def test_tc4_new_ph_calendar_day_decrements_again(self):
+        from machines.models import CronJobRun
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=10)
+        call_command("decrement_machine_days", stdout=StringIO())
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 9)
+
+        # Simulate "yesterday" by rolling the tracking row's last_run_date back one day --
+        # the guard should then allow today's run to proceed normally.
+        run_record = CronJobRun.objects.get(job_name="decrement_machine_days")
+        run_record.last_run_date -= timedelta(days=1)
+        run_record.save(update_fields=["last_run_date"])
+
+        call_command("decrement_machine_days", stdout=StringIO())
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 8)
+
+    def test_tc5_never_references_balance_points_in_command_code(self):
+        """Direct code check, not just docstring inspection: confirm the actual command file's
+        handle() logic never reads/writes Account.balance_points."""
+        import inspect
+
+        from machines.management.commands.decrement_machine_days import Command
+
+        source = inspect.getsource(Command.handle)
+        self.assertNotIn("balance_points", source)
+
+    def test_multiple_machines_and_mixed_zero_balances_all_handled_correctly(self):
+        m1 = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        m2 = Machine.objects.create(
+            owner=Account.objects.create_user(phone_number="09179876543"), days_remaining=0
+        )
+        m3 = Machine.objects.create(
+            owner=Account.objects.create_user(phone_number="09171112222"), days_remaining=1
+        )
+        call_command("decrement_machine_days", stdout=StringIO())
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        m3.refresh_from_db()
+        self.assertEqual(m1.days_remaining, 4)
+        self.assertEqual(m2.days_remaining, 0)
+        self.assertEqual(m3.days_remaining, 0)
