@@ -155,3 +155,52 @@ class DecrementMachineDaysTests(TestCase):
         self.assertEqual(m1.days_remaining, 4)
         self.assertEqual(m2.days_remaining, 0)
         self.assertEqual(m3.days_remaining, 0)
+
+
+class RunDailyCronJobsTests(TestCase):
+    """run_daily_cron_jobs wrapper: both jobs run independently, and one failing doesn't skip
+    the other -- the actual mitigation for the shared-Railway-service tradeoff, not just claimed
+    in the docstring."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def test_both_jobs_run_successfully_in_normal_conditions(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        License.objects.filter(pk=lic.pk).update(
+            created_at=timezone.now() - timedelta(days=21)
+        )
+
+        out = StringIO()
+        call_command("run_daily_cron_jobs", stdout=out)
+
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())
+        self.assertIn("Both jobs completed successfully", out.getvalue())
+
+    def test_failure_in_one_job_does_not_skip_the_other(self):
+        """If cleanup_unclaimed_licenses raises, decrement_machine_days must still run."""
+        from django.core.management.base import CommandError
+        from unittest.mock import patch
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+
+        def fake_call_command(name, *args, **kwargs):
+            if name == "cleanup_unclaimed_licenses":
+                raise RuntimeError("simulated crash")
+            # Let decrement_machine_days actually run for real.
+            from django.core.management import call_command as real_call_command
+            return real_call_command(name, *args, **kwargs)
+
+        with patch(
+            "machines.management.commands.run_daily_cron_jobs.call_command",
+            side_effect=fake_call_command,
+        ):
+            with self.assertRaises(CommandError):
+                call_command("run_daily_cron_jobs")
+
+        # The failing job didn't block the other one from running.
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
