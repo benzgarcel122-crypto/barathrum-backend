@@ -11,10 +11,23 @@ from django.views.decorators.http import require_http_methods
  
 from accounts.models import PointTransfer, normalize_phone_number
 from machines import paymongo_client
-from machines.models import BUNDLE_TYPE_CHOICES, License, Machine, Payment, Transaction
+from machines.models import (
+    BUNDLE_TYPE_CHOICES,
+    UNCLAIMED_LICENSE_LIFETIME_DAYS,
+    License,
+    Machine,
+    Payment,
+    Transaction,
+    calendar_days_since,
+)
 from machines.paymongo_client import PayMongoAPIError
  
 Account = get_user_model()
+ 
+# STEP: license generation fee (anti-abuse) -- deducted from the generating operator's own wallet
+# balance in generate_license_view below. Named constant, used everywhere the fee amount matters
+# so it's never hardcoded a second time.
+LICENSE_GENERATION_FEE = 20  # points deducted from the generating operator's wallet balance
  
 # Bundle pricing, per the locked design in the STEP 2.2 task -- UNCHANGED by STEP 2.4:
 #   bundle_type -> (days, price_pesos)
@@ -158,11 +171,64 @@ def generate_license_view(request):
     Session 36: this is now the sidebar's primary nav slot (repurposed from "Add Machine", which
     was redundant with Dashboard Home's own "+ Add Machine" button). active_nav is "generate_license"
     to match, not "add_machine" -- Add Machine itself is no longer in the sidebar at all.
+
+    Anti-abuse fee (this task): generating a license now costs LICENSE_GENERATION_FEE points,
+    deducted from the generating operator's own wallet balance -- previously this was free and
+    spammable (unlimited ownerless License rows with no balance check). Mirrors the exact
+    pre-check + locked re-check discipline topup_view and send_points_view already use.
     """
     if request.method == "GET":
-        return render(request, "dashboard/generate_license.html", {"active_nav": "generate_license"})
- 
-    license_obj = License.objects.create(account=None, generated_by=request.user)
+        history = []
+        for lic in request.user.generated_licenses.order_by("-created_at"):
+            if lic.is_claimed:
+                machine = Machine.objects.filter(license_key=lic.license_key).first()
+                history.append({
+                    "license": lic,
+                    "status": "claimed",
+                    "machine": machine,
+                })
+            else:
+                age_days = calendar_days_since(lic.created_at)
+                days_until_expiry = UNCLAIMED_LICENSE_LIFETIME_DAYS - age_days
+                history.append({
+                    "license": lic,
+                    "status": "unclaimed",
+                    "days_until_expiry": days_until_expiry,
+                })
+        return render(
+            request,
+            "dashboard/generate_license.html",
+            {
+                "active_nav": "generate_license",
+                "fee": LICENSE_GENERATION_FEE,
+                "balance_points": request.user.balance_points,
+                "history": history,
+            },
+        )
+
+    if request.user.balance_points < LICENSE_GENERATION_FEE:
+        messages.error(
+            request,
+            f"You need at least {LICENSE_GENERATION_FEE} points to generate a license key. "
+            f"Your current balance is {request.user.balance_points}.",
+        )
+        return redirect("dashboard:generate_license")
+
+    with db_transaction.atomic():
+        locked_account = Account.objects.select_for_update().get(pk=request.user.pk)
+        if locked_account.balance_points < LICENSE_GENERATION_FEE:
+            messages.error(
+                request,
+                f"You need at least {LICENSE_GENERATION_FEE} points to generate a license key. "
+                f"Your current balance is {locked_account.balance_points}.",
+            )
+            return redirect("dashboard:generate_license")
+
+        locked_account.balance_points -= LICENSE_GENERATION_FEE
+        locked_account.save(update_fields=["balance_points"])
+
+        license_obj = License.objects.create(account=None, generated_by=request.user)
+
     return render(
         request,
         "dashboard/license_generated.html",
