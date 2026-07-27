@@ -16,6 +16,19 @@
     current wallet balance: <strong>{{ balance_points }}</strong>.</p>
   <form method="post" action="{% url 'dashboard:generate_license' %}">
     {% csrf_token %}
+    <div class="field">
+      <label for="id_recovery_password">Recovery password</label>
+      <input type="password" id="id_recovery_password" name="recovery_password"
+             autocomplete="new-password" required>
+      <div class="field-hint">You'll need this to release the license later (e.g. after
+        reflashing a box) so you can reuse it without losing its balance. It is never shown
+        again — write it down somewhere safe.</div>
+    </div>
+    <div class="field">
+      <label for="id_recovery_password_confirm">Confirm recovery password</label>
+      <input type="password" id="id_recovery_password_confirm" name="recovery_password_confirm"
+             autocomplete="new-password" required>
+    </div>
     <button type="submit" class="btn btn-block">Generate License Key</button>
   </form>
 </div>
