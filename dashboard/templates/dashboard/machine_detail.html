@@ -5,6 +5,7 @@
 <div class="page-header">
   <h1>{{ machine.nickname|default:machine.license_key }}</h1>
   <a href="{% url 'dashboard:topup' machine.id %}" class="btn btn-sm">Top Up</a>
+  <a href="{% url 'dashboard:release_license' machine.id %}" class="btn btn-sm btn-secondary">Release License</a>
 </div>
 
 <div class="card">
