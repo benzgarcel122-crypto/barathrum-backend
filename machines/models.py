@@ -235,3 +235,25 @@ class Payment(models.Model):
  
     def __str__(self):
         return f"Payment({self.account.phone_number}, ₱{self.amount_pesos}, {self.status})"
+ 
+
+class CronJobRun(models.Model):
+    """
+    Minimal idempotency tracker for daily cron jobs. STEP 2.7's decrement_machine_days command
+    is the first (and, as of this task, only) user of this model -- one row per named job,
+    recording the last PH-calendar-date (Asia/Manila, via timezone.localtime().date() -- same
+    convention as calendar_days_since() above, deliberately not a second date convention) that
+    job actually completed a run.
+
+    Why a dedicated model rather than something more elaborate: this only needs to answer one
+    question per run -- "has today's decrement already happened?" -- and a single unique-keyed
+    row per job_name answers that with a plain get_or_create, no separate migration data fixture,
+    no cross-job coupling. If more cron jobs need the same guard later, they reuse this same
+    model with their own job_name; nothing about this model is specific to machine-day decrementing.
+    """
+
+    job_name = models.CharField(max_length=100, unique=True)
+    last_run_date = models.DateField()
+
+    def __str__(self):
+        return f"{self.job_name}: last ran {self.last_run_date}"
