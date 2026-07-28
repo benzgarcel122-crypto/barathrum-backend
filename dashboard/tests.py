@@ -585,9 +585,9 @@ class GenerateLicenseHistoryZeroBalanceCountdownTests(TestCase):
         content = resp.content.decode()
 
         self.assertIn("expires in 4 day", content)
-        # Confirm the red color is actually applied to the span wrapping this specific text,
-        # not just present somewhere unrelated on the page.
-        red_span_index = content.find("var(--color-red)")
+        # Confirm the danger badge class is actually applied to the span wrapping this specific
+        # text, not just present somewhere unrelated on the page.
+        red_span_index = content.find("badge-danger")
         expiry_text_index = content.find("expires in 4 day")
         self.assertNotEqual(red_span_index, -1)
         self.assertNotEqual(expiry_text_index, -1)
