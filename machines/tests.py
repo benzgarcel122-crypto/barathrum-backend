@@ -178,7 +178,7 @@ class RunDailyCronJobsTests(TestCase):
         m.refresh_from_db()
         self.assertEqual(m.days_remaining, 4)
         self.assertFalse(License.objects.filter(pk=lic.pk).exists())
-        self.assertIn("Both jobs completed successfully", out.getvalue())
+        self.assertIn("All jobs completed successfully", out.getvalue())
 
     def test_failure_in_one_job_does_not_skip_the_other(self):
         """If cleanup_unclaimed_licenses raises, decrement_machine_days must still run."""
@@ -204,3 +204,137 @@ class RunDailyCronJobsTests(TestCase):
         # The failing job didn't block the other one from running.
         m.refresh_from_db()
         self.assertEqual(m.days_remaining, 4)
+
+
+class CleanupZeroBalanceMachinesTests(TestCase):
+    """
+    STEP 2.7 item 5 (Session 48 corrected design): cleanup_zero_balance_machines management
+    command. Separate command/test class from CleanupUnclaimedLicensesTests -- this only ever
+    touches Machine rows at days_remaining == 0, regardless of License/claim status.
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _backdate_zero_balance(self, machine, days_ago):
+        Machine.objects.filter(pk=machine.pk).update(
+            zero_balance_since=timezone.now() - timedelta(days=days_ago)
+        )
+        machine.refresh_from_db()
+
+    def test_stamps_newly_zero_machine(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self.assertIsNone(m.zero_balance_since)
+
+        call_command("cleanup_zero_balance_machines")
+
+        m.refresh_from_db()
+        self.assertIsNotNone(m.zero_balance_since)
+
+    def test_positive_balance_machine_not_stamped(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+
+        call_command("cleanup_zero_balance_machines")
+
+        m.refresh_from_db()
+        self.assertIsNone(m.zero_balance_since)
+
+    def test_self_heal_clears_stale_stamp_on_positive_balance(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=3)
+        Machine.objects.filter(pk=m.pk).update(zero_balance_since=timezone.now())
+        m.refresh_from_db()
+        self.assertIsNotNone(m.zero_balance_since)
+
+        call_command("cleanup_zero_balance_machines")
+
+        m.refresh_from_db()
+        self.assertIsNone(m.zero_balance_since)
+
+    def test_deletes_machine_license_and_transactions_after_20_days(self):
+        from machines.models import Transaction
+
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        m = Machine.objects.create(owner=self.acc1, license_key=lic.license_key, days_remaining=0)
+        Transaction.objects.create(machine=m, bundle_type="30day", days_added=30, amount_paid_pesos=27)
+        self._backdate_zero_balance(m, 20)
+
+        call_command("cleanup_zero_balance_machines")
+
+        self.assertFalse(Machine.objects.filter(pk=m.pk).exists())
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())
+        self.assertFalse(Transaction.objects.filter(machine_id=m.pk).exists())
+
+    def test_does_not_delete_before_20_days(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self._backdate_zero_balance(m, 19)
+
+        call_command("cleanup_zero_balance_machines")
+
+        self.assertTrue(Machine.objects.filter(pk=m.pk).exists())
+
+    def test_claim_status_irrelevant_to_deletion_trigger(self):
+        """A RELEASED machine at zero balance for 20+ days is deleted exactly the same as a
+        still-claimed one -- claim status is explicitly not a factor (Session 48 correction)."""
+        m = Machine.objects.create(
+            owner=self.acc1, days_remaining=0, removed_at=timezone.now() - timedelta(days=25)
+        )
+        self._backdate_zero_balance(m, 20)
+
+        call_command("cleanup_zero_balance_machines")
+
+        self.assertFalse(Machine.objects.filter(pk=m.pk).exists())
+
+    def test_idempotency_guard_skips_second_run_same_day(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self._backdate_zero_balance(m, 20)
+
+        call_command("cleanup_zero_balance_machines")
+        self.assertFalse(Machine.objects.filter(pk=m.pk).exists())
+
+        # A second machine, also 20+ days at zero, created AFTER the first run -- since the
+        # guard blocks the whole command from running again today, this one should survive
+        # until tomorrow's run, proving the guard actually blocks re-execution.
+        m2 = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self._backdate_zero_balance(m2, 20)
+
+        out = StringIO()
+        call_command("cleanup_zero_balance_machines", stdout=out)
+        self.assertIn("Already ran today", out.getvalue())
+        self.assertTrue(Machine.objects.filter(pk=m2.pk).exists())
+
+
+class TopupClearsZeroBalanceCountdownTests(TestCase):
+    """Any top-up (dashboard/views.py topup_view / bulk_topup_view) must immediately clear
+    Machine.zero_balance_since, per STEP 2.7 item 5's 'no minimum threshold' rule."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=1000
+        )
+
+    def test_single_topup_clears_zero_balance_since(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        Machine.objects.filter(pk=m.pk).update(zero_balance_since=timezone.now())
+        m.refresh_from_db()
+        self.assertIsNotNone(m.zero_balance_since)
+
+        self.client.force_login(self.acc1)
+        self.client.post(f"/machines/{m.id}/topup/", {"mode": "bundle", "bundle_type": "30day"})
+
+        m.refresh_from_db()
+        self.assertIsNone(m.zero_balance_since)
+        self.assertEqual(m.days_remaining, 30)
+
+    def test_bulk_topup_clears_zero_balance_since(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        Machine.objects.filter(pk=m.pk).update(zero_balance_since=timezone.now())
+        m.refresh_from_db()
+
+        self.client.force_login(self.acc1)
+        self.client.post(
+            "/machines/bulk-topup/",
+            {"machine_id": [m.id], f"bundle_{m.id}": "30day"},
+        )
+
+        m.refresh_from_db()
+        self.assertIsNone(m.zero_balance_since)
