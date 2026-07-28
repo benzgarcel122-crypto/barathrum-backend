@@ -27,6 +27,15 @@ BUNDLE_TYPE_CHOICES = [
 # both stay in sync rather than hardcoding 20 in two separate files.
 UNCLAIMED_LICENSE_LIFETIME_DAYS = 20
 
+# STEP 2.7 item 5 (Session 48 corrected design): separate 20-day rule from the one above --
+# this one applies to a MACHINE sitting at days_remaining == 0, regardless of claimed/released
+# status (claim status is explicitly NOT a factor, per the Session 48 correction). Shared
+# between machines/management/commands/cleanup_zero_balance_machines.py (the actual deletion
+# job) and Machine.zero_balance_since below. Deliberately a separate constant from
+# UNCLAIMED_LICENSE_LIFETIME_DAYS even though both happen to be 20 today -- they are two
+# unrelated rules about two different object types that coincidentally share a number.
+MACHINE_ZERO_BALANCE_CLEANUP_DAYS = 20
+
 
 def calendar_days_since(created_at):
     """
@@ -91,6 +100,23 @@ class Machine(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     last_checkin_at = models.DateTimeField(null=True, blank=True)
+    # STEP 2.7 items 2-4 (Session 48 design): NULL means active/claimed (today's behavior,
+    # unchanged). Non-NULL means this machine was released via the recovery-password-gated
+    # Release License flow (dashboard/views.py::release_license_view) -- the row is kept, not
+    # deleted, so days_remaining and Transaction history survive until either a re-claim
+    # (add_machine_view reactivates this exact row) or the 20-day zero-balance cleanup job
+    # eventually sweeps it up.
+    removed_at = models.DateTimeField(null=True, blank=True)
+    # STEP 2.7 item 5 (Session 48 corrected design): set the moment days_remaining reaches
+    # exactly 0 (by either the daily decrement or a top-up leaving it at 0); NULL means the
+    # machine currently has a positive balance / has never hit zero. This is the anchor the
+    # cleanup_zero_balance_machines cron job measures its 20-day countdown from, via
+    # calendar_days_since() below -- claim/release status (Machine.removed_at) is explicitly NOT
+    # a factor in this countdown, only this field. Cleared back to NULL the moment ANY top-up is
+    # applied (topup_view / bulk_topup_view), no minimum amount threshold, cancelling the
+    # countdown immediately -- if the balance later returns to 0, a fresh countdown starts from
+    # a fresh timestamp.
+    zero_balance_since = models.DateTimeField(null=True, blank=True)
  
     def save(self, *args, **kwargs):
         # STEP 2.5 (Session 31): this auto-generate-on-save path is no longer how normal Add
@@ -174,7 +200,25 @@ class License(models.Model):
                   "license was generated -- only who generated it becomes unknown.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
- 
+    # STEP 2.7 items 2-4 (Session 48 design): a recovery password, set once at generation time
+    # and never displayed again, that gates the new Release License action (see
+    # dashboard/views.py::release_license_view). Stored as a django.contrib.auth.hashers
+    # make_password() hash, never plaintext. blank=True/default="" is a migration-safety choice
+    # only, for License rows that existed before this field did -- an empty hash can never match
+    # any real password via check_password(), so those old rows simply can never be released
+    # through this feature (no backfill, no special-case code needed elsewhere).
+    recovery_password_hash = models.CharField(max_length=128, blank=True, default="")
+    # Wrong-guess counter for the Release License password check, same pattern as
+    # accounts.models.OTPCode.failed_attempts / MAX_FAILED_ATTEMPTS.
+    release_failed_attempts = models.PositiveSmallIntegerField(default=0)
+    # Set to now() + 15 minutes once release_failed_attempts hits RELEASE_MAX_FAILED_ATTEMPTS;
+    # NULL means no active lockout. Never a permanent lockout -- there is no way to reset a
+    # forgotten recovery password, so a permanent lock would strand the license forever instead
+    # of letting it eventually exit via the 20-day zero-balance cleanup job.
+    release_locked_until = models.DateTimeField(null=True, blank=True)
+
+    RELEASE_MAX_FAILED_ATTEMPTS = 5
+
     def save(self, *args, **kwargs):
         if not self.license_key:
             self.license_key = generate_unique_license_key([License, Machine])
@@ -182,8 +226,16 @@ class License(models.Model):
  
     @property
     def is_claimed(self):
-        """True once some Machine has been created using this License's key."""
-        return Machine.objects.filter(license_key=self.license_key).exists()
+        """
+        True only while an ACTIVE Machine (not released) exists using this License's key.
+
+        STEP 2.7 items 2-4 (Session 48 design): previously this checked for any Machine row's
+        existence at all. Now that a released Machine row is kept (not deleted) so its
+        days_remaining/history survive, "claimed" must specifically mean "an active Machine
+        exists" -- otherwise a released-but-not-yet-reclaimed license would incorrectly still
+        show as claimed/unavailable.
+        """
+        return Machine.objects.filter(license_key=self.license_key, removed_at__isnull=True).exists()
  
     def __str__(self):
         claimed = " (claimed)" if self.is_claimed else " (unclaimed)"

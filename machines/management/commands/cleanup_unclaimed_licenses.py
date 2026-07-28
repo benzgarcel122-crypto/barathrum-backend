@@ -14,21 +14,17 @@ class Command(BaseCommand):
     -- see machines.models.calendar_days_since() for the exact logic, shared with the dashboard
     countdown so both always agree on when a given License will actually be deleted.
 
-    This is a SEPARATE rule from STEP 2.7's (designed but not yet built, as of this task)
-    unclaimed+zero-balance MACHINE cleanup -- that rule (once built) will apply to previously
-    claimed machines that were removed and hit zero balance; this one applies to never-claimed
-    LICENSE rows. Different object types, different trigger conditions -- deliberately kept as
-    a separate command/cron entry rather than merged into one job or one code path, per the
-    task's explicit instruction.
+    This is a SEPARATE rule from STEP 2.7's zero-balance MACHINE cleanup
+    (machines/management/commands/cleanup_zero_balance_machines.py, added the same task as
+    Release License) -- that rule applies to previously-claimed machines that hit zero balance
+    (claim/release status irrelevant to that rule); this one applies to never-claimed LICENSE
+    rows. Different object types, different trigger conditions -- deliberately kept as a
+    separate command/cron entry rather than merged into one job or one code path.
 
-    NOTE: there is no existing "decrement_machine_days" command anywhere in this repo to mirror
-    the structure of, despite STEP 2.7 being described as already built in some planning notes --
-    it was designed but never actually implemented (no management/ directory existed in any app
-    before this command). This command was written fresh, following this project's own general
-    conventions (explicit docstrings, print-based logging for Railway's log capture) rather than
-    an existing pattern. Flagged to the Investigator separately -- if/when STEP 2.7's machine
-    cleanup command is eventually built, it should live alongside this one as its own separate
-    Command class, never merged into this file or vice versa.
+    NOTE: for a period, this project's own MPD referred to the machine-balance cleanup job as
+    "STEP 2.7, designed but not yet built" -- that note is now stale as of the session that added
+    cleanup_zero_balance_machines.py; both cleanup jobs exist side by side as of this file's
+    current version.
 
     The 20-point license generation fee is FORFEITED (not refunded) when a License is deleted
     this way -- confirmed by the PM as the same precedent as STEP 2.7's own forfeiture rule.

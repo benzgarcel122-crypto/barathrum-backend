@@ -1,0 +1,77 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Release License — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Release license</h1>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">
+    Enter this license's recovery password to release it. It will become claimable on any box,
+    and this machine's balance and history will be preserved.
+  </p>
+  <table style="width:100%; margin-bottom:16px; font-size:0.9rem; border-collapse: collapse;">
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Machine</td>
+      <td style="text-align:right;">{{ machine.nickname|default:"(no nickname)" }}</td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">License key</td>
+      <td style="text-align:right; font-family: monospace;">{{ machine.license_key }}</td>
+    </tr>
+  </table>
+  <form method="post" action="{% url 'dashboard:release_license' machine.id %}">
+    {% csrf_token %}
+    {% if is_locked %}
+      <div id="lockout-banner" class="field-hint" style="margin-bottom:12px; color: var(--color-red, #c0392b);">
+        Too many incorrect attempts. Try again in <span id="lockout-countdown">15:00</span>.
+      </div>
+    {% endif %}
+    <div class="field">
+      <label for="id_password">Recovery password</label>
+      <input type="password" id="id_password" name="password" autocomplete="off" required
+             {% if is_locked %}disabled{% endif %}>
+    </div>
+    <button type="submit" id="release-submit-btn" class="btn btn-block" {% if is_locked %}disabled{% endif %}>
+      Release License
+    </button>
+  </form>
+  <p class="text-muted mt-16" style="text-align:center;">
+    <a href="{% url 'dashboard:machine_detail' machine.id %}">Cancel</a>
+  </p>
+</div>
+
+{% if is_locked %}
+<script>
+(function () {
+  var lockedUntil = new Date("{{ release_locked_until_iso }}").getTime();
+  var countdownEl = document.getElementById('lockout-countdown');
+  var banner = document.getElementById('lockout-banner');
+  var passwordInput = document.getElementById('id_password');
+  var submitBtn = document.getElementById('release-submit-btn');
+
+  function tick() {
+    var remainingMs = lockedUntil - Date.now();
+    if (remainingMs <= 0) {
+      // Lockout window has passed -- re-enable the field client-side rather than forcing a
+      // reload; the server independently re-validates the lockout on submit regardless.
+      if (banner) banner.style.display = 'none';
+      passwordInput.disabled = false;
+      submitBtn.disabled = false;
+      clearInterval(intervalId);
+      return;
+    }
+    var totalSeconds = Math.ceil(remainingMs / 1000);
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    countdownEl.textContent = minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+  }
+
+  tick();
+  var intervalId = setInterval(tick, 1000);
+})();
+</script>
+{% endif %}
+
+{% endblock %}

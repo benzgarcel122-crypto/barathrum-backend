@@ -1,12 +1,15 @@
+from datetime import timedelta
 from decimal import Decimal
  
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
  
 from accounts.models import PointTransfer, normalize_phone_number
@@ -141,7 +144,7 @@ def home_view(request):
     if not request.user.is_authenticated:
         return render(request, "dashboard/landing.html", {})
  
-    machines = Machine.objects.filter(owner=request.user).order_by("-created_at")
+    machines = Machine.objects.filter(owner=request.user, removed_at__isnull=True).order_by("-created_at")
     cards = [_machine_card_context(m) for m in machines]
     any_needs_topup = any(c["needs_topup"] for c in cards)
  
@@ -206,6 +209,25 @@ def generate_license_view(request):
             },
         )
 
+    # STEP 2.7 items 2-4 (Session 48 design): a recovery password is now mandatory before a
+    # License can be generated at all -- it gates the new Release License action later. Checked
+    # BEFORE any fee deduction or License creation, so a failed password check never costs the
+    # operator points or leaves a passwordless License row behind.
+    recovery_password = request.POST.get("recovery_password", "")
+    recovery_password_confirm = request.POST.get("recovery_password_confirm", "")
+
+    if not recovery_password or not recovery_password_confirm:
+        messages.error(request, "Enter and confirm a recovery password.")
+        return redirect("dashboard:generate_license")
+
+    if recovery_password != recovery_password_confirm:
+        messages.error(request, "Recovery passwords don't match.")
+        return redirect("dashboard:generate_license")
+
+    if len(recovery_password) < 6:
+        messages.error(request, "Recovery password must be at least 6 characters.")
+        return redirect("dashboard:generate_license")
+
     if request.user.balance_points < LICENSE_GENERATION_FEE:
         messages.error(
             request,
@@ -227,7 +249,11 @@ def generate_license_view(request):
         locked_account.balance_points -= LICENSE_GENERATION_FEE
         locked_account.save(update_fields=["balance_points"])
 
-        license_obj = License.objects.create(account=None, generated_by=request.user)
+        license_obj = License.objects.create(
+            account=None,
+            generated_by=request.user,
+            recovery_password_hash=make_password(recovery_password),
+        )
 
     return render(
         request,
@@ -275,18 +301,35 @@ def add_machine_view(request):
         )
         return render(request, "dashboard/add_machine.html", context)
  
-    if Machine.objects.filter(license_key=license_obj.license_key).exists():
+    # STEP 2.7 items 2-4 (Session 48 design): three states instead of two. A Machine row can now
+    # exist for this license_key in an ACTIVE state (still rejected outright, same as before), a
+    # RELEASED state (this is the new case -- reactivate that exact row instead of rejecting or
+    # creating a second row for the same key), or not exist at all (unchanged fresh-claim path).
+    existing_machine = Machine.objects.filter(license_key=license_obj.license_key).first()
+
+    if existing_machine is not None and existing_machine.removed_at is None:
         messages.error(request, "This license key is already attached to a machine.")
         return render(request, "dashboard/add_machine.html", context)
- 
+
     try:
         with db_transaction.atomic():
-            machine = Machine.objects.create(
-                owner=request.user, nickname=nickname, license_key=license_obj.license_key
-            )
+            if existing_machine is not None:
+                # Released machine being reclaimed: reactivate the SAME row so days_remaining
+                # and every existing Transaction row (which FKs to this Machine's pk) survive
+                # completely untouched -- do not create a second Machine row for this key.
+                machine = existing_machine
+                machine.removed_at = None
+                machine.owner = request.user
+                machine.nickname = nickname
+                machine.save(update_fields=["removed_at", "owner", "nickname"])
+            else:
+                machine = Machine.objects.create(
+                    owner=request.user, nickname=nickname, license_key=license_obj.license_key
+                )
             # Repurpose License.account from "generator" to "claimant" now that this key is
             # spoken for. .update() (not .save()) so this stays inside the same atomic block as
-            # the Machine insert without re-running License.save()'s key-generation logic.
+            # the Machine insert/reactivation without re-running License.save()'s key-generation
+            # logic. Applies identically to a fresh claim and a reclaim-after-release.
             License.objects.filter(pk=license_obj.pk).update(account=request.user)
     except IntegrityError:
         # Race: another request claimed this exact key between the check above and this insert.
@@ -302,8 +345,90 @@ def add_machine_view(request):
         "dashboard/machine_created.html",
         {"active_nav": "add_machine", "machine": machine},
     )
- 
- 
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def release_license_view(request, machine_id):
+    """
+    STEP 2.7 items 2-4 (Session 48 design): lets an operator release their own claimed machine
+    back to unclaimed status, gated by the license's recovery password (set at generation time
+    in generate_license_view). Solves the real-world case of an operator reflashing their own
+    box's SSD and needing to reuse the same license -- distinct from the older, rarer
+    multi-dashboard "Remove Machine" scenario (Session 32), which had no ownership-match
+    requirement on re-claim; this feature exists specifically because that generic release path
+    would let a stranger snatch the license mid-window.
+
+    On success: Machine.removed_at is set (row kept, not deleted), so days_remaining and every
+    Transaction row survive untouched until either a re-claim via add_machine_view (which
+    reactivates this exact row) or the 20-day zero-balance cleanup job eventually sweeps it up.
+    """
+    machine = get_object_or_404(
+        Machine, id=machine_id, owner=request.user, removed_at__isnull=True
+    )
+
+    try:
+        license_obj = License.objects.get(license_key=machine.license_key)
+    except License.DoesNotExist:
+        # Should not realistically happen given the FK-by-string design between Machine and
+        # License, but fail gracefully rather than a 500 if it ever does.
+        messages.error(request, "Something went wrong looking up this license. Try again later.")
+        return redirect("dashboard:machine_detail", machine_id=machine.id)
+
+    # Computed once and passed to every render below (GET, and both POST outcomes) so the
+    # template can show a live countdown and gray out the password field whenever a lockout is
+    # active -- not just immediately after the POST that triggered it. release_locked_until is
+    # passed as an ISO 8601 string (JS-friendly) rather than the raw Python datetime, whose
+    # default str() is what produced the unreadable "2026-07-28 02:32:30.226130+00:00" message
+    # this replaces.
+    def _lockout_context():
+        is_locked = bool(
+            license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until
+        )
+        return {
+            "active_nav": "dashboard",
+            "machine": machine,
+            "is_locked": is_locked,
+            "release_locked_until_iso": license_obj.release_locked_until.isoformat()
+            if is_locked
+            else None,
+        }
+
+    if request.method == "GET":
+        return render(request, "dashboard/release_license.html", _lockout_context())
+
+    if license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until:
+        messages.error(request, "Too many incorrect attempts. Try again in 15 minutes.")
+        return render(request, "dashboard/release_license.html", _lockout_context())
+
+    password = request.POST.get("password", "")
+
+    if check_password(password, license_obj.recovery_password_hash):
+        with db_transaction.atomic():
+            machine.removed_at = timezone.now()
+            machine.save(update_fields=["removed_at"])
+
+            license_obj.release_failed_attempts = 0
+            license_obj.release_locked_until = None
+            license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
+
+        messages.success(request, "License released. It can now be re-added on any box.")
+        return redirect("dashboard:home")
+
+    # Incorrect password: increment the failed-attempt counter, same throttle pattern as
+    # accounts.models.OTPCode. Never reveal the remaining-attempts count in the UI.
+    license_obj.release_failed_attempts += 1
+    if license_obj.release_failed_attempts >= License.RELEASE_MAX_FAILED_ATTEMPTS:
+        license_obj.release_locked_until = timezone.now() + timedelta(minutes=15)
+        # Reset the counter in the same save so the next window, after the cooldown expires,
+        # starts fresh rather than being immediately re-locked.
+        license_obj.release_failed_attempts = 0
+    license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
+
+    messages.error(request, "Incorrect recovery password.")
+    return render(request, "dashboard/release_license.html", _lockout_context())
+
+
 def download_placeholder_view(request):
     """
     STEP 2.5 (Session 31): STEP 1's box agent doesn't exist yet, so "Download Box Software" on
@@ -315,7 +440,7 @@ def download_placeholder_view(request):
  
 @login_required
 def machine_detail_view(request, machine_id):
-    machine = get_object_or_404(Machine, id=machine_id, owner=request.user)
+    machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
     transactions = machine.transactions.order_by("-created_at")[:20]
     return render(
         request,
@@ -338,7 +463,7 @@ def topup_view(request, machine_id):
     the site at all -- this is now a single atomic DB transaction, same as STEP 2.2's original stub,
     just gated on a real balance check instead of being unconditionally free.
     """
-    machine = get_object_or_404(Machine, id=machine_id, owner=request.user)
+    machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
  
     if request.method == "GET":
         tab = request.GET.get("tab", "bundles")
@@ -402,7 +527,12 @@ def topup_view(request, machine_id):
  
         machine.days_remaining += days_added
         machine.last_topup_bundle_type = bundle_type
-        machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+        # STEP 2.7 item 5 (Session 48 corrected design): ANY top-up, no minimum threshold,
+        # cancels the zero-balance cleanup countdown immediately -- cleared here rather than
+        # waiting for the next daily cron pass, so the countdown reset happens the instant the
+        # top-up is applied, not up to a day later.
+        machine.zero_balance_since = None
+        machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
  
         Transaction.objects.create(
             machine=machine,
@@ -434,7 +564,7 @@ def bulk_topup_view(request):
         machine_ids = [int(i) for i in ids_param.split(",") if i.strip().isdigit()]
     ids_param = ",".join(str(i) for i in machine_ids)
  
-    machines = list(Machine.objects.filter(id__in=machine_ids, owner=request.user).order_by("-created_at"))
+    machines = list(Machine.objects.filter(id__in=machine_ids, owner=request.user, removed_at__isnull=True).order_by("-created_at"))
  
     if not machines:
         messages.error(request, "No machines selected for bulk top-up.")
@@ -486,7 +616,10 @@ def bulk_topup_view(request):
         for machine, bundle_type, days_added, price in updates:
             machine.days_remaining += days_added
             machine.last_topup_bundle_type = bundle_type
-            machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+            # STEP 2.7 item 5 (Session 48 corrected design): same immediate-cancel rule as
+            # topup_view above -- applies per-machine within this batch.
+            machine.zero_balance_since = None
+            machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
             Transaction.objects.create(
                 machine=machine,
                 bundle_type=bundle_type,
