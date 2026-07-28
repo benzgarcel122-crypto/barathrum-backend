@@ -41,33 +41,35 @@
   <p class="text-muted">Every license key you've generated, including recovering a key you didn't
     copy down. Deleted (expired-unclaimed) licenses no longer appear here — that's expected.</p>
   {% if history %}
-    <table style="width:100%; font-size:0.88rem; border-collapse: collapse;">
-      {% for entry in history %}
-      <tr style="border-top:1px solid var(--color-border);">
-        <td style="padding:8px 0; font-family: monospace;">{{ entry.license.license_key }}</td>
-        <td style="padding:8px 0;" class="text-muted">{{ entry.license.created_at }}</td>
+    {% for entry in history %}
+    <div class="history-row">
+      <div class="history-row-top">
+        <span class="history-key">{{ entry.license.license_key }}</span>
+        <span class="history-date">{{ entry.license.created_at }}</span>
+      </div>
+      <div class="history-row-bottom">
         {% if entry.status == "claimed" %}
-          <td style="padding:8px 0; text-align:right; color: var(--color-green);">
-            Claimed
-            {% if entry.machine %}
-              — {{ entry.machine.nickname|default:"(no nickname)" }},
+          <span class="badge badge-unlocked">Claimed</span>
+          {% if entry.machine %}
+            <span class="history-nickname">{{ entry.machine.nickname|default:"(no nickname)" }}</span>
+            <span class="badge badge-neutral">
               {{ entry.machine.days_remaining }} day{{ entry.machine.days_remaining|pluralize }} left
-              {% if entry.days_until_deletion is not None %}
-                <span style="color: {% if entry.days_until_deletion <= 5 %}var(--color-red){% else %}var(--color-green){% endif %};">
-                  , expires in {{ entry.days_until_deletion }} day{{ entry.days_until_deletion|pluralize }}
-                </span>
-              {% endif %}
+            </span>
+            {% if entry.days_until_deletion is not None %}
+              <span class="badge {% if entry.days_until_deletion <= 5 %}badge-danger{% else %}badge-unlocked{% endif %}">
+                expires in {{ entry.days_until_deletion }} day{{ entry.days_until_deletion|pluralize }}
+              </span>
             {% endif %}
-          </td>
+          {% endif %}
         {% else %}
-          <td style="padding:8px 0; text-align:right;
-              color: {% if entry.days_until_expiry <= 5 %}var(--color-red){% else %}var(--color-text-muted){% endif %};">
-            Unclaimed — expires in {{ entry.days_until_expiry }} day{{ entry.days_until_expiry|pluralize }}
-          </td>
+          <span class="badge badge-locked">Unclaimed</span>
+          <span class="badge {% if entry.days_until_expiry <= 5 %}badge-danger{% else %}badge-neutral{% endif %}">
+            expires in {{ entry.days_until_expiry }} day{{ entry.days_until_expiry|pluralize }}
+          </span>
         {% endif %}
-      </tr>
-      {% endfor %}
-    </table>
+      </div>
+    </div>
+    {% endfor %}
   {% else %}
     <p class="text-muted">You haven't generated any license keys yet.</p>
   {% endif %}
