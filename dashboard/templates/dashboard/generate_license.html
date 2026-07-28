@@ -52,6 +52,11 @@
             {% if entry.machine %}
               — {{ entry.machine.nickname|default:"(no nickname)" }},
               {{ entry.machine.days_remaining }} day{{ entry.machine.days_remaining|pluralize }} left
+              {% if entry.days_until_deletion is not None %}
+                <span style="color: {% if entry.days_until_deletion <= 5 %}var(--color-red){% else %}var(--color-green){% endif %};">
+                  , expires in {{ entry.days_until_deletion }} day{{ entry.days_until_deletion|pluralize }}
+                </span>
+              {% endif %}
             {% endif %}
           </td>
         {% else %}
