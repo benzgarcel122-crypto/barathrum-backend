@@ -17,6 +17,7 @@ from machines import paymongo_client
 from machines.models import (
     BUNDLE_TYPE_CHOICES,
     MACHINE_ZERO_BALANCE_CLEANUP_DAYS,
+    MINIMUM_TOPUP_POINTS,
     UNCLAIMED_LICENSE_LIFETIME_DAYS,
     License,
     Machine,
@@ -507,8 +508,8 @@ def topup_view(request, machine_id):
             days_added = int(request.POST.get("custom_days", "0"))
         except ValueError:
             days_added = 0
-        if days_added <= 0:
-            messages.error(request, "Enter a number of days greater than zero.")
+        if days_added < MINIMUM_TOPUP_POINTS:
+            messages.error(request, f"Minimum custom top-up is {MINIMUM_TOPUP_POINTS} days.")
             return redirect(f"{request.path}?tab=custom")
         bundle_type = "custom"
         price = CUSTOM_PRICE_PER_DAY * days_added
@@ -670,8 +671,8 @@ def wallet_topup_view(request):
     except ValueError:
         amount = 0
  
-    if amount <= 0:
-        messages.error(request, "Enter an amount greater than zero.")
+    if amount < MINIMUM_TOPUP_POINTS:
+        messages.error(request, f"Minimum top-up is {MINIMUM_TOPUP_POINTS} points.")
         return redirect("dashboard:wallet_topup")
  
     payment = Payment.objects.create(account=request.user, amount_pesos=amount, status="pending")
