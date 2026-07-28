@@ -266,11 +266,49 @@ a { color: var(--color-accent-dark); }
 }
 .badge-unlocked { background: var(--color-green-bg); color: var(--color-green); }
 .badge-locked { background: var(--color-border); color: var(--color-text-muted); }
+.badge-danger { background: var(--color-red-bg); color: var(--color-red); }
+.badge-neutral { background: var(--color-border); color: var(--color-text); }
 .badge-reason {
   display: block;
   font-size: 0.75rem;
   color: var(--color-text-muted);
   margin-top: 2px;
+}
+
+/* ---------- License generation history ---------- */
+.history-row {
+  padding: 12px 0;
+  border-top: 1px solid var(--color-border);
+}
+.history-row:first-child { border-top: none; padding-top: 0; }
+.history-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.history-key {
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+.history-date {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.history-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.history-nickname {
+  font-size: 0.88rem;
+  margin-right: 2px;
 }
 
 /* ---------- Buttons ---------- */
