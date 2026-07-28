@@ -16,6 +16,7 @@ from accounts.models import PointTransfer, normalize_phone_number
 from machines import paymongo_client
 from machines.models import (
     BUNDLE_TYPE_CHOICES,
+    MACHINE_ZERO_BALANCE_CLEANUP_DAYS,
     UNCLAIMED_LICENSE_LIFETIME_DAYS,
     License,
     Machine,
@@ -185,10 +186,21 @@ def generate_license_view(request):
         for lic in request.user.generated_licenses.order_by("-created_at"):
             if lic.is_claimed:
                 machine = Machine.objects.filter(license_key=lic.license_key).first()
+                # STEP 2.7 item 5 follow-up (this task): surface the zero-balance cleanup
+                # countdown here too, not just in the DB. None means either the machine still
+                # has a positive balance, or it was topped up and the countdown was already
+                # cancelled -- the template uses None to decide whether to show anything extra
+                # at all, same convention as days_until_expiry below for unclaimed licenses.
+                days_until_deletion = None
+                if machine is not None and machine.zero_balance_since is not None:
+                    days_until_deletion = MACHINE_ZERO_BALANCE_CLEANUP_DAYS - calendar_days_since(
+                        machine.zero_balance_since
+                    )
                 history.append({
                     "license": lic,
                     "status": "claimed",
                     "machine": machine,
+                    "days_until_deletion": days_until_deletion,
                 })
             else:
                 age_days = calendar_days_since(lic.created_at)
