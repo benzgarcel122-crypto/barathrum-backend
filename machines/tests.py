@@ -205,6 +205,36 @@ class RunDailyCronJobsTests(TestCase):
         m.refresh_from_db()
         self.assertEqual(m.days_remaining, 4)
 
+    def test_failure_in_third_job_does_not_skip_the_other_two(self):
+        """Prompt's TC7: simulate a failure specifically in cleanup_zero_balance_machines (the
+        newly-added third job) and confirm the other two still run to completion."""
+        from django.core.management.base import CommandError
+        from unittest.mock import patch
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        License.objects.filter(pk=lic.pk).update(
+            created_at=timezone.now() - timedelta(days=21)
+        )
+
+        def fake_call_command(name, *args, **kwargs):
+            if name == "cleanup_zero_balance_machines":
+                raise RuntimeError("simulated crash")
+            from django.core.management import call_command as real_call_command
+            return real_call_command(name, *args, **kwargs)
+
+        with patch(
+            "machines.management.commands.run_daily_cron_jobs.call_command",
+            side_effect=fake_call_command,
+        ):
+            with self.assertRaises(CommandError):
+                call_command("run_daily_cron_jobs")
+
+        # Both of the other two jobs still completed despite the third one crashing.
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)  # decrement_machine_days still ran
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())  # cleanup_unclaimed_licenses still ran
+
 
 class CleanupZeroBalanceMachinesTests(TestCase):
     """
@@ -301,6 +331,71 @@ class CleanupZeroBalanceMachinesTests(TestCase):
         call_command("cleanup_zero_balance_machines", stdout=out)
         self.assertIn("Already ran today", out.getvalue())
         self.assertTrue(Machine.objects.filter(pk=m2.pk).exists())
+
+    def test_one_day_topup_specifically_cancels_countdown(self):
+        """Prompt's TC2 explicitly calls out a 1-day top-up, not just 'some' top-up, to prove
+        there is truly no minimum threshold."""
+        self.acc1.balance_points = 10
+        self.acc1.save(update_fields=["balance_points"])
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self._backdate_zero_balance(m, 5)
+
+        self.client.force_login(self.acc1)
+        self.client.post(
+            f"/machines/{m.id}/topup/",
+            {"mode": "custom", "custom_days": "1"},
+        )
+
+        m.refresh_from_db()
+        self.assertEqual(m.days_remaining, 1)
+        self.assertIsNone(m.zero_balance_since)
+
+        # Confirmed on the next cron run too, not just immediately after the top-up.
+        call_command("cleanup_zero_balance_machines")
+        self.assertTrue(Machine.objects.filter(pk=m.pk).exists())
+
+    def test_both_claimed_and_released_machines_deleted_in_same_run(self):
+        """Prompt's TC5: claim status must be irrelevant -- a still-claimed machine and a
+        released machine, both 20+ days at zero balance, must BOTH be deleted by the same run,
+        not just the released one."""
+        claimed_lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        claimed_machine = Machine.objects.create(
+            owner=self.acc1, license_key=claimed_lic.license_key, days_remaining=0
+        )  # removed_at defaults to NULL -- still actively claimed
+        self._backdate_zero_balance(claimed_machine, 20)
+
+        released_lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        released_machine = Machine.objects.create(
+            owner=self.acc1,
+            license_key=released_lic.license_key,
+            days_remaining=0,
+            removed_at=timezone.now() - timedelta(days=25),
+        )
+        self._backdate_zero_balance(released_machine, 20)
+
+        call_command("cleanup_zero_balance_machines")
+
+        self.assertFalse(Machine.objects.filter(pk=claimed_machine.pk).exists())
+        self.assertFalse(License.objects.filter(pk=claimed_lic.pk).exists())
+        self.assertFalse(Machine.objects.filter(pk=released_machine.pk).exists())
+        self.assertFalse(License.objects.filter(pk=released_lic.pk).exists())
+
+    def test_payment_rows_completely_untouched(self):
+        """Prompt's TC6: Payment has no relationship to Machine at all (Account-only FK) and
+        must never be read or written by this command."""
+        from machines.models import Payment
+
+        payment = Payment.objects.create(account=self.acc1, amount_pesos=100, status="paid")
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=0)
+        self._backdate_zero_balance(m, 20)
+
+        call_command("cleanup_zero_balance_machines")
+
+        self.assertFalse(Machine.objects.filter(pk=m.pk).exists())
+        payment.refresh_from_db()  # would raise DoesNotExist if it had somehow been deleted
+        self.assertEqual(payment.status, "paid")
+        self.assertEqual(payment.amount_pesos, 100)
 
 
 class TopupClearsZeroBalanceCountdownTests(TestCase):
