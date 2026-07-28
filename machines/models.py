@@ -36,6 +36,13 @@ UNCLAIMED_LICENSE_LIFETIME_DAYS = 20
 # unrelated rules about two different object types that coincidentally share a number.
 MACHINE_ZERO_BALANCE_CLEANUP_DAYS = 20
 
+# STEP 2.7 follow-up (this task): shared floor for both the wallet PayMongo top-up
+# (dashboard/views.py wallet_topup_view) and the per-machine custom/per-day top-up
+# (dashboard/views.py topup_view's "custom" branch) -- previously each only rejected amounts
+# <= 0, with no minimum above that. One named constant so both validations stay in sync rather
+# than hardcoding 10 in two separate views.
+MINIMUM_TOPUP_POINTS = 10
+
 
 def calendar_days_since(created_at):
     """

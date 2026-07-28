@@ -332,9 +332,12 @@ class CleanupZeroBalanceMachinesTests(TestCase):
         self.assertIn("Already ran today", out.getvalue())
         self.assertTrue(Machine.objects.filter(pk=m2.pk).exists())
 
-    def test_one_day_topup_specifically_cancels_countdown(self):
-        """Prompt's TC2 explicitly calls out a 1-day top-up, not just 'some' top-up, to prove
-        there is truly no minimum threshold."""
+    def test_minimum_allowed_topup_cancels_countdown(self):
+        """Originally proved a 1-day top-up cancels the countdown with no separate minimum of
+        its own; a later task added a MINIMUM_TOPUP_POINTS=10 floor on what can be submitted at
+        all via this view, so 10 is now the smallest top-up actually reachable here -- updated
+        accordingly. The zero-balance-cancels-on-any-successful-top-up rule itself is unchanged;
+        only the smallest amount that can reach it changed."""
         self.acc1.balance_points = 10
         self.acc1.save(update_fields=["balance_points"])
         m = Machine.objects.create(owner=self.acc1, days_remaining=0)
@@ -343,11 +346,11 @@ class CleanupZeroBalanceMachinesTests(TestCase):
         self.client.force_login(self.acc1)
         self.client.post(
             f"/machines/{m.id}/topup/",
-            {"mode": "custom", "custom_days": "1"},
+            {"mode": "custom", "custom_days": "10"},
         )
 
         m.refresh_from_db()
-        self.assertEqual(m.days_remaining, 1)
+        self.assertEqual(m.days_remaining, 10)
         self.assertIsNone(m.zero_balance_since)
 
         # Confirmed on the next cron run too, not just immediately after the top-up.
