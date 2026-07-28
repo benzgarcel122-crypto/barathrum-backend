@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.test import TestCase
@@ -529,3 +531,84 @@ class ReleaseLicenseFeatureTests(TestCase):
         self.client.force_login(self.acc2)
         resp = self.client.get(f"/machines/{machine.id}/release/")
         self.assertEqual(resp.status_code, 404)
+
+
+class GenerateLicenseHistoryZeroBalanceCountdownTests(TestCase):
+    """
+    STEP 2.7 item 5 follow-up (this task): the License Generation History table's "expires in
+    N days" text for claimed machines whose zero-balance cleanup countdown has started.
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=1000
+        )
+
+    # TC1: positive-balance claimed machine (zero_balance_since is None) -> no "expires in" text.
+    def test_tc1_positive_balance_machine_shows_no_expiry_text(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=10
+        )
+
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/licenses/generate/")
+
+        self.assertContains(resp, "Box A")
+        self.assertNotContains(resp, "expires in")
+
+    # TC2: zero_balance_since just set (0-1 days elapsed) -> "expires in 20 days" (or 19).
+    def test_tc2_freshly_zeroed_machine_shows_near_full_countdown(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box B", days_remaining=0
+        )
+        Machine.objects.filter(pk=machine.pk).update(zero_balance_since=timezone.now())
+
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/licenses/generate/")
+
+        self.assertContains(resp, "expires in 20 day")
+
+    # TC3: backdated 16+ days -> "expires in N days" renders, N <= 5, in red.
+    def test_tc3_near_expiry_machine_renders_in_red(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box C", days_remaining=0
+        )
+        Machine.objects.filter(pk=machine.pk).update(
+            zero_balance_since=timezone.now() - timedelta(days=16)
+        )
+
+        self.client.force_login(self.acc1)
+        resp = self.client.get("/licenses/generate/")
+        content = resp.content.decode()
+
+        self.assertIn("expires in 4 day", content)
+        # Confirm the red color is actually applied to the span wrapping this specific text,
+        # not just present somewhere unrelated on the page.
+        red_span_index = content.find("var(--color-red)")
+        expiry_text_index = content.find("expires in 4 day")
+        self.assertNotEqual(red_span_index, -1)
+        self.assertNotEqual(expiry_text_index, -1)
+        self.assertLess(red_span_index, expiry_text_index)
+        self.assertLess(expiry_text_index - red_span_index, 200)  # same span, not a coincidence
+
+    # TC4: top-up clears zero_balance_since -> "expires in" text disappears on next page load.
+    def test_tc4_topup_removes_expiry_text_on_next_load(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, nickname="Box D", days_remaining=0
+        )
+        Machine.objects.filter(pk=machine.pk).update(
+            zero_balance_since=timezone.now() - timedelta(days=10)
+        )
+
+        self.client.force_login(self.acc1)
+        before = self.client.get("/licenses/generate/")
+        self.assertContains(before, "expires in")
+
+        self.client.post(f"/machines/{machine.id}/topup/", {"mode": "custom", "custom_days": "1"})
+
+        after = self.client.get("/licenses/generate/")
+        self.assertNotContains(after, "expires in")
