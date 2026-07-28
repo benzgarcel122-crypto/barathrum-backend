@@ -23,15 +23,55 @@
   </table>
   <form method="post" action="{% url 'dashboard:release_license' machine.id %}">
     {% csrf_token %}
+    {% if is_locked %}
+      <div id="lockout-banner" class="field-hint" style="margin-bottom:12px; color: var(--color-red, #c0392b);">
+        Too many incorrect attempts. Try again in <span id="lockout-countdown">15:00</span>.
+      </div>
+    {% endif %}
     <div class="field">
       <label for="id_password">Recovery password</label>
-      <input type="password" id="id_password" name="password" autocomplete="off" required>
+      <input type="password" id="id_password" name="password" autocomplete="off" required
+             {% if is_locked %}disabled{% endif %}>
     </div>
-    <button type="submit" class="btn btn-block">Release License</button>
+    <button type="submit" id="release-submit-btn" class="btn btn-block" {% if is_locked %}disabled{% endif %}>
+      Release License
+    </button>
   </form>
   <p class="text-muted mt-16" style="text-align:center;">
     <a href="{% url 'dashboard:machine_detail' machine.id %}">Cancel</a>
   </p>
 </div>
+
+{% if is_locked %}
+<script>
+(function () {
+  var lockedUntil = new Date("{{ release_locked_until_iso }}").getTime();
+  var countdownEl = document.getElementById('lockout-countdown');
+  var banner = document.getElementById('lockout-banner');
+  var passwordInput = document.getElementById('id_password');
+  var submitBtn = document.getElementById('release-submit-btn');
+
+  function tick() {
+    var remainingMs = lockedUntil - Date.now();
+    if (remainingMs <= 0) {
+      // Lockout window has passed -- re-enable the field client-side rather than forcing a
+      // reload; the server independently re-validates the lockout on submit regardless.
+      if (banner) banner.style.display = 'none';
+      passwordInput.disabled = false;
+      submitBtn.disabled = false;
+      clearInterval(intervalId);
+      return;
+    }
+    var totalSeconds = Math.ceil(remainingMs / 1000);
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    countdownEl.textContent = minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+  }
+
+  tick();
+  var intervalId = setInterval(tick, 1000);
+})();
+</script>
+{% endif %}
 
 {% endblock %}
