@@ -27,6 +27,15 @@ BUNDLE_TYPE_CHOICES = [
 # both stay in sync rather than hardcoding 20 in two separate files.
 UNCLAIMED_LICENSE_LIFETIME_DAYS = 20
 
+# STEP 2.7 item 5 (Session 48 corrected design): separate 20-day rule from the one above --
+# this one applies to a MACHINE sitting at days_remaining == 0, regardless of claimed/released
+# status (claim status is explicitly NOT a factor, per the Session 48 correction). Shared
+# between machines/management/commands/cleanup_zero_balance_machines.py (the actual deletion
+# job) and Machine.zero_balance_since below. Deliberately a separate constant from
+# UNCLAIMED_LICENSE_LIFETIME_DAYS even though both happen to be 20 today -- they are two
+# unrelated rules about two different object types that coincidentally share a number.
+MACHINE_ZERO_BALANCE_CLEANUP_DAYS = 20
+
 
 def calendar_days_since(created_at):
     """
@@ -98,6 +107,16 @@ class Machine(models.Model):
     # (add_machine_view reactivates this exact row) or the 20-day zero-balance cleanup job
     # eventually sweeps it up.
     removed_at = models.DateTimeField(null=True, blank=True)
+    # STEP 2.7 item 5 (Session 48 corrected design): set the moment days_remaining reaches
+    # exactly 0 (by either the daily decrement or a top-up leaving it at 0); NULL means the
+    # machine currently has a positive balance / has never hit zero. This is the anchor the
+    # cleanup_zero_balance_machines cron job measures its 20-day countdown from, via
+    # calendar_days_since() below -- claim/release status (Machine.removed_at) is explicitly NOT
+    # a factor in this countdown, only this field. Cleared back to NULL the moment ANY top-up is
+    # applied (topup_view / bulk_topup_view), no minimum amount threshold, cancelling the
+    # countdown immediately -- if the balance later returns to 0, a fresh countdown starts from
+    # a fresh timestamp.
+    zero_balance_since = models.DateTimeField(null=True, blank=True)
  
     def save(self, *args, **kwargs):
         # STEP 2.5 (Session 31): this auto-generate-on-save path is no longer how normal Add
