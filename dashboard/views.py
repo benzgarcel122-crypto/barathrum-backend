@@ -375,24 +375,31 @@ def release_license_view(request, machine_id):
         messages.error(request, "Something went wrong looking up this license. Try again later.")
         return redirect("dashboard:machine_detail", machine_id=machine.id)
 
-    if request.method == "GET":
-        return render(
-            request,
-            "dashboard/release_license.html",
-            {"active_nav": "dashboard", "machine": machine},
+    # Computed once and passed to every render below (GET, and both POST outcomes) so the
+    # template can show a live countdown and gray out the password field whenever a lockout is
+    # active -- not just immediately after the POST that triggered it. release_locked_until is
+    # passed as an ISO 8601 string (JS-friendly) rather than the raw Python datetime, whose
+    # default str() is what produced the unreadable "2026-07-28 02:32:30.226130+00:00" message
+    # this replaces.
+    def _lockout_context():
+        is_locked = bool(
+            license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until
         )
+        return {
+            "active_nav": "dashboard",
+            "machine": machine,
+            "is_locked": is_locked,
+            "release_locked_until_iso": license_obj.release_locked_until.isoformat()
+            if is_locked
+            else None,
+        }
+
+    if request.method == "GET":
+        return render(request, "dashboard/release_license.html", _lockout_context())
 
     if license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until:
-        messages.error(
-            request,
-            "Too many incorrect attempts. Try again after "
-            f"{license_obj.release_locked_until}.",
-        )
-        return render(
-            request,
-            "dashboard/release_license.html",
-            {"active_nav": "dashboard", "machine": machine},
-        )
+        messages.error(request, "Too many incorrect attempts. Try again in 15 minutes.")
+        return render(request, "dashboard/release_license.html", _lockout_context())
 
     password = request.POST.get("password", "")
 
@@ -419,11 +426,7 @@ def release_license_view(request, machine_id):
     license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
 
     messages.error(request, "Incorrect recovery password.")
-    return render(
-        request,
-        "dashboard/release_license.html",
-        {"active_nav": "dashboard", "machine": machine},
-    )
+    return render(request, "dashboard/release_license.html", _lockout_context())
 
 
 def download_placeholder_view(request):
@@ -524,7 +527,12 @@ def topup_view(request, machine_id):
  
         machine.days_remaining += days_added
         machine.last_topup_bundle_type = bundle_type
-        machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+        # STEP 2.7 item 5 (Session 48 corrected design): ANY top-up, no minimum threshold,
+        # cancels the zero-balance cleanup countdown immediately -- cleared here rather than
+        # waiting for the next daily cron pass, so the countdown reset happens the instant the
+        # top-up is applied, not up to a day later.
+        machine.zero_balance_since = None
+        machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
  
         Transaction.objects.create(
             machine=machine,
@@ -608,7 +616,10 @@ def bulk_topup_view(request):
         for machine, bundle_type, days_added, price in updates:
             machine.days_remaining += days_added
             machine.last_topup_bundle_type = bundle_type
-            machine.save(update_fields=["days_remaining", "last_topup_bundle_type"])
+            # STEP 2.7 item 5 (Session 48 corrected design): same immediate-cancel rule as
+            # topup_view above -- applies per-machine within this batch.
+            machine.zero_balance_since = None
+            machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
             Transaction.objects.create(
                 machine=machine,
                 bundle_type=bundle_type,
