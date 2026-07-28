@@ -608,7 +608,96 @@ class GenerateLicenseHistoryZeroBalanceCountdownTests(TestCase):
         before = self.client.get("/licenses/generate/")
         self.assertContains(before, "expires in")
 
-        self.client.post(f"/machines/{machine.id}/topup/", {"mode": "custom", "custom_days": "1"})
+        self.client.post(f"/machines/{machine.id}/topup/", {"mode": "custom", "custom_days": "10"})
 
         after = self.client.get("/licenses/generate/")
         self.assertNotContains(after, "expires in")
+
+
+class MinimumTopupPointsTests(TestCase):
+    """Enforces MINIMUM_TOPUP_POINTS (10) on both the wallet PayMongo top-up and the per-machine
+    custom top-up; bundle and bulk top-ups are unaffected."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=1000
+        )
+
+    # TC1: wallet top-up with amount = 9 -> rejected, no Payment created.
+    def test_tc1_wallet_topup_below_minimum_rejected(self):
+        from machines.models import Payment
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post("/wallet/topup/", {"amount": "9"})
+
+        self.assertRedirects(resp, "/wallet/topup/")
+        self.assertEqual(Payment.objects.count(), 0)
+
+    # TC2: wallet top-up with amount = 10 -> succeeds, proceeds to PayMongo checkout.
+    def test_tc2_wallet_topup_at_minimum_succeeds(self):
+        from unittest.mock import patch
+        from machines.models import Payment
+
+        self.client.force_login(self.acc1)
+        with patch(
+            "dashboard.views._initiate_paymongo_checkout",
+            return_value="https://checkout.paymongo.example/session123",
+        ):
+            resp = self.client.post("/wallet/topup/", {"amount": "10"})
+
+        self.assertRedirects(
+            resp, "https://checkout.paymongo.example/session123", fetch_redirect_response=False
+        )
+        self.assertEqual(Payment.objects.count(), 1)
+        self.assertEqual(Payment.objects.get().amount_pesos, 10)
+
+    # TC3: custom machine top-up with 9 days -> rejected, no deduction, no Transaction.
+    def test_tc3_custom_topup_below_minimum_rejected(self):
+        machine = Machine.objects.create(owner=self.acc1, days_remaining=5)
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            f"/machines/{machine.id}/topup/", {"mode": "custom", "custom_days": "9"}
+        )
+
+        self.assertRedirects(resp, f"/machines/{machine.id}/topup/?tab=custom")
+        machine.refresh_from_db()
+        self.acc1.refresh_from_db()
+        self.assertEqual(machine.days_remaining, 5)
+        self.assertEqual(self.acc1.balance_points, 1000)
+        self.assertEqual(Transaction.objects.filter(machine=machine).count(), 0)
+
+    # TC4: custom machine top-up with 10 days -> succeeds as normal.
+    def test_tc4_custom_topup_at_minimum_succeeds(self):
+        machine = Machine.objects.create(owner=self.acc1, days_remaining=5)
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            f"/machines/{machine.id}/topup/", {"mode": "custom", "custom_days": "10"}
+        )
+
+        self.assertRedirects(resp, "/")
+        machine.refresh_from_db()
+        self.assertEqual(machine.days_remaining, 15)
+        self.assertEqual(Transaction.objects.filter(machine=machine).count(), 1)
+
+    # TC5: bundle top-up and bulk top-up remain completely unaffected.
+    def test_tc5_bundle_and_bulk_topup_unaffected(self):
+        machine = Machine.objects.create(owner=self.acc1, days_remaining=5)
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            f"/machines/{machine.id}/topup/", {"mode": "bundle", "bundle_type": "30day"}
+        )
+        self.assertRedirects(resp, "/")
+        machine.refresh_from_db()
+        self.assertEqual(machine.days_remaining, 35)
+
+        machine2 = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        bulk_resp = self.client.post(
+            "/machines/bulk-topup/",
+            {"machine_id": [machine2.id], f"bundle_{machine2.id}": "30day"},
+        )
+        self.assertRedirects(bulk_resp, "/")
+        machine2.refresh_from_db()
+        self.assertEqual(machine2.days_remaining, 35)
