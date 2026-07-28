@@ -22,24 +22,43 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-# Falls back to the original dev-only key so `manage.py runserver` keeps working locally with no
-# environment variables set. Railway MUST have a real SECRET_KEY set in its Variables tab —
-# see the deployment report for the exact value to generate/set.
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY', 'django-insecure-r(ev&oy(4b^$3dzoc2r(hrhhsljr=atpcnyy@j+4mgp=6rk!ae'
-)
-
 # SECURITY WARNING: don't run with debug turned on in production!
 #
 # Careful parsing note: os.environ.get() returns a *string*, and bool("False") is True in
 # Python (any non-empty string is truthy). Naively doing `bool(os.environ.get('DEBUG', True))`
 # would leave production in DEBUG=True the moment DEBUG=False is set as a literal string, which
 # is exactly backwards from what we want. We explicitly compare against a known "truthy string"
-# set instead, and default to 'True' only for local dev (i.e. only when the env var is entirely
-# absent, e.g. running `manage.py runserver` on a laptop) — if DEBUG is set to anything in the
-# environment, it must be one of these exact strings to be treated as True.
-DEBUG = os.environ.get('DEBUG', 'True').strip().lower() in ('true', '1', 'yes', 'on')
+# set instead.
+#
+# Session 38 Security Reviewer finding #6 (closed this task): the env-var-missing default was
+# previously 'True' -- meaning any environment that forgot to set DEBUG at all would fail OPEN
+# (verbose tracebacks, hardcoded SECRET_KEY fallback eligible, no secure cookies) rather than
+# failing closed. Default flipped to 'False' so a forgotten DEBUG env var now behaves as
+# production-safe by default; local dev (`manage.py runserver` with no env vars set) must now set
+# DEBUG=True explicitly (e.g. in a local .env) to get the old convenience behavior back.
+DEBUG = os.environ.get('DEBUG', 'False').strip().lower() in ('true', '1', 'yes', 'on')
+
+# SECURITY WARNING: keep the secret key used in production secret!
+#
+# Session 38 Security Reviewer finding #3 (closed this task): a hardcoded dev-only key used to
+# silently serve as the fallback in ANY environment, including production, if SECRET_KEY was ever
+# forgotten. The fallback is still allowed when DEBUG is True (so a fresh local clone with no
+# environment variables set keeps working with `manage.py runserver`, which is the actual thing
+# worth preserving here) -- but if DEBUG is False and the real env var is missing, this now fails
+# loudly at startup instead of silently reusing a key that's sitting in this file's own git
+# history for anyone to read. Deliberately placed after DEBUG above, since this check depends on
+# it.
+if os.environ.get('SECRET_KEY'):
+    SECRET_KEY = os.environ['SECRET_KEY']
+elif DEBUG:
+    SECRET_KEY = 'django-insecure-r(ev&oy(4b^$3dzoc2r(hrhhsljr=atpcnyy@j+4mgp=6rk!ae'
+else:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is not set. Refusing to start with DEBUG=False using "
+        "the hardcoded dev-only fallback key -- set a real SECRET_KEY in this environment's "
+        "Variables (Railway) before deploying."
+    )
 
 # Comma-separated list from env (e.g. "barathrum.up.railway.app,barathrum.example.com"), plus
 # localhost/127.0.0.1/testserver kept for local dev and the Django test client regardless of env.
@@ -66,6 +85,19 @@ CSRF_TRUSTED_ORIGINS = list({
 # in over HTTPS. Safe locally too: `manage.py runserver` doesn't send this header, so local dev
 # is unaffected either way.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Session 38 Security Reviewer finding #1 (closed this task): session/CSRF cookies were not
+# marked Secure, requests weren't force-redirected to HTTPS, and no HSTS header was sent at all.
+# All four gated behind `not DEBUG` so local `manage.py runserver` over plain http://localhost
+# is completely unaffected -- these only take effect once DEBUG is False.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG
+# Deliberately conservative at 1 hour rather than the commonly-recommended year-long value --
+# HSTS is hard to safely undo if the domain setup changes later (Cloudflare/custom-domain work
+# is still pending, tracker row 10). Raise this only once the domain situation is fully settled,
+# not as part of this task.
+SECURE_HSTS_SECONDS = 3600 if not DEBUG else 0
 
 
 # Application definition
