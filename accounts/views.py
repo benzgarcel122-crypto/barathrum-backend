@@ -1,4 +1,3 @@
-
 import json
 from urllib.parse import quote
  
@@ -13,6 +12,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods
  
 from .models import Account, OTPCode, normalize_phone_number
+from .semaphore_client import SemaphoreAPIError
  
 # STEP 2.2 update: real HTML templates now exist for signup/verify/login, so @csrf_exempt has
 # been removed from all three views (this was flagged as a STEP 2.2 follow-up in the STEP 2.1
@@ -87,8 +87,33 @@ def signup_view(request):
             status=400,
         )
  
+    wait_seconds = OTPCode.seconds_until_next_issue_allowed(phone_number)
+    if wait_seconds > 0:
+        error_msg = f"Please wait {wait_seconds} seconds before requesting another code."
+        if wants_json:
+            return JsonResponse(
+                {"error": error_msg, "retry_after_seconds": wait_seconds}, status=429
+            )
+        return render(
+            request,
+            "accounts/signup.html",
+            {"form_errors": {"non_field": error_msg}, "form_values": data, "next_value": next_value},
+            status=429,
+        )
+
     request.session["pending_signup_display_name"] = display_name
-    otp = OTPCode.issue(phone_number)
+    try:
+        otp = OTPCode.issue(phone_number)
+    except SemaphoreAPIError:
+        error_msg = "Couldn't send the code, please try again."
+        if wants_json:
+            return JsonResponse({"error": error_msg}, status=503)
+        return render(
+            request,
+            "accounts/signup.html",
+            {"form_errors": {"non_field": error_msg}, "form_values": data, "next_value": next_value},
+            status=503,
+        )
  
     if wants_json:
         return JsonResponse(
@@ -276,7 +301,32 @@ def login_view(request):
             status=400,
         )
  
-    otp = OTPCode.issue(phone_number)
+    wait_seconds = OTPCode.seconds_until_next_issue_allowed(phone_number)
+    if wait_seconds > 0:
+        error_msg = f"Please wait {wait_seconds} seconds before requesting another code."
+        if wants_json:
+            return JsonResponse(
+                {"error": error_msg, "retry_after_seconds": wait_seconds}, status=429
+            )
+        return render(
+            request,
+            "accounts/login.html",
+            {"form_errors": {"non_field": error_msg}, "form_values": data, "next_value": next_value},
+            status=429,
+        )
+
+    try:
+        otp = OTPCode.issue(phone_number)
+    except SemaphoreAPIError:
+        error_msg = "Couldn't send the code, please try again."
+        if wants_json:
+            return JsonResponse({"error": error_msg}, status=503)
+        return render(
+            request,
+            "accounts/login.html",
+            {"form_errors": {"non_field": error_msg}, "form_values": data, "next_value": next_value},
+            status=503,
+        )
  
     if wants_json:
         return JsonResponse(
@@ -304,4 +354,3 @@ def logout_view(request):
     django_logout(request)
     messages.info(request, "You've been logged out.")
     return redirect("login")
- 
