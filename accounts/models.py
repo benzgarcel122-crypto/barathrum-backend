@@ -128,7 +128,11 @@ class OTPCode(models.Model):
     # number, regardless of signup vs. login path. Folds in Security Reviewer finding #5
     # (Session 38) -- neither signup_view nor login_view previously throttled how often a fresh
     # OTP (and therefore a fresh Semaphore SMS) could be requested.
-    OTP_ISSUANCE_COOLDOWN_SECONDS = 60
+    # Raised 60s -> 180s (post-launch session): each issuance is a paid Semaphore SMS
+    # (~PHP 0.56-1.12/send depending on package); a longer cooldown reduces exposure to
+    # accidental or abusive rapid-fire "Send code" clicks driving up the bill, at the cost of
+    # legitimate users waiting longer for a resend. PM/billing decision, not a security fix.
+    OTP_ISSUANCE_COOLDOWN_SECONDS = 180
 
     class Meta:
         indexes = [models.Index(fields=["phone_number", "code", "used"])]
