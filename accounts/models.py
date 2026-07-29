@@ -1,3 +1,4 @@
+import math
 import re
 import secrets
 from datetime import timedelta
@@ -7,6 +8,8 @@ from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
 from django.utils import timezone
+
+from . import semaphore_client
 
 
 def normalize_phone_number(raw_phone_number):
@@ -121,6 +124,12 @@ class OTPCode(models.Model):
 
     MAX_FAILED_ATTEMPTS = 5
 
+    # STEP 2.1a: minimum gap between two OTP ISSUANCES (not verifications) for the same phone
+    # number, regardless of signup vs. login path. Folds in Security Reviewer finding #5
+    # (Session 38) -- neither signup_view nor login_view previously throttled how often a fresh
+    # OTP (and therefore a fresh Semaphore SMS) could be requested.
+    OTP_ISSUANCE_COOLDOWN_SECONDS = 60
+
     class Meta:
         indexes = [models.Index(fields=["phone_number", "code", "used"])]
 
@@ -143,12 +152,43 @@ class OTPCode(models.Model):
         return f"{secrets.randbelow(1_000_000):06d}"
 
     @classmethod
+    def seconds_until_next_issue_allowed(cls, phone_number):
+        """
+        Pure read, no side effects, no writes. Returns 0 if a fresh OTP may be issued for
+        phone_number right now; otherwise the whole number of seconds remaining (rounded up to
+        the nearest second) before the next issue is allowed.
+
+        Looks at the most recently CREATED OTPCode row for phone_number regardless of `used`
+        status -- this cooldown gates ISSUANCE (how often a new SMS goes out), not verification,
+        so an already-used-up code from 10 seconds ago still blocks a fresh send just as much as
+        a still-pending one would.
+        """
+        last = cls.objects.filter(phone_number=phone_number).order_by("-created_at").first()
+        if last is None:
+            return 0
+        elapsed_seconds = (timezone.now() - last.created_at).total_seconds()
+        remaining = cls.OTP_ISSUANCE_COOLDOWN_SECONDS - elapsed_seconds
+        if remaining <= 0:
+            return 0
+        return math.ceil(remaining)
+
+    @classmethod
     def issue(cls, phone_number):
-        """Create a fresh OTP for phone_number and 'send' it (console-log only, per STEP 2.1 scope)."""
+        """
+        Create a fresh OTP for phone_number and send it via Semaphore (STEP 2.1a).
+
+        Fail-closed by construction: the Semaphore send happens BEFORE the OTPCode row is
+        persisted. If semaphore_client.send_otp() raises SemaphoreAPIError, that exception
+        propagates uncaught out of this method (the calling view is responsible for catching it
+        and returning the fail-closed error) and .objects.create(...) is never reached -- so a
+        failed send can never leave a "valid" OTPCode sitting in the DB for a code the phone never
+        actually received.
+        """
         phone_number = normalize_phone_number(phone_number)
-        otp = cls.objects.create(phone_number=phone_number, code=cls.generate_code())
-        # DO NOT wire this to a real SMS gateway here — that's an explicit out-of-scope item for
-        # STEP 2.1. This print is the intentional stand-in the task asked for.
+        code = cls.generate_code()
+        semaphore_client.send_otp(phone_number, code)
+        otp = cls.objects.create(phone_number=phone_number, code=code)
+        # Supplementary debug log alongside the real Semaphore send, not instead of it.
         print(f"[BARATHRUM OTP] phone_number={phone_number} code={otp.code} expires_at={otp.expires_at.isoformat()}")
         return otp
 
