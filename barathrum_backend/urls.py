@@ -27,5 +27,6 @@ urlpatterns = [
     path('login/', accounts_views.login_view, name='login'),
     path('logout/', accounts_views.logout_view, name='logout'),
     path('webhooks/paymongo/', paymongo_webhook_view, name='paymongo_webhook'),
+    path('', include('machines.urls')),
     path('', include('dashboard.urls')),
 ]
