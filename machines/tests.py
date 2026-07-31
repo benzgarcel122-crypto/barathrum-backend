@@ -1,9 +1,12 @@
+import json
 from datetime import timedelta
 from io import StringIO
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.management import call_command
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 from machines.models import License, Machine
@@ -436,3 +439,156 @@ class TopupClearsZeroBalanceCountdownTests(TestCase):
 
         m.refresh_from_db()
         self.assertIsNone(m.zero_balance_since)
+
+
+class ValidateLicenseViewTests(TestCase):
+    """
+    POST /api/box/validate-license/ -- box-pairing license validation endpoint, per the task's
+    5 required cases (claimed / unclaimed / nonexistent / empty / rate-limited) plus a couple of
+    supporting checks (no Machine/License mutation, normalization, wrong-method rejection).
+
+    IMPORTANT: this endpoint's rate limiter is keyed by client IP and stored in Django's default
+    cache, which persists across tests within the same test-process run (it's not reset by
+    TestCase's DB-transaction rollback, since it isn't the DB). Every test explicitly clears the
+    relevant cache key in setUp so tests don't leak rate-limit state into each other and produce
+    order-dependent failures.
+    """
+
+    url = "/api/box/validate-license/"
+
+    def setUp(self):
+        cache.clear()
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _post(self, license_key):
+        return self.client.post(
+            self.url, data=json.dumps({"license_key": license_key}), content_type="application/json"
+        )
+
+    def test_reverse_resolves_to_the_documented_path(self):
+        self.assertEqual(reverse("machines:validate_license"), self.url)
+
+    def test_tc1_valid_claimed_license_key_returns_200(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = self._post(lic.license_key)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["valid"], True)
+
+    def test_tc1b_lowercase_and_whitespace_input_normalized_same_as_claim_view(self):
+        """Same .strip().upper() normalization as add_machine_view's license_key_input --
+        confirms this endpoint doesn't silently diverge from that normalization rule."""
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = self._post(f"  {lic.license_key.lower()}  ")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_tc2_valid_unclaimed_license_key_returns_409_with_actionable_message(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+
+        response = self._post(lic.license_key)
+
+        self.assertEqual(response.status_code, 409)
+        body = response.json()
+        self.assertEqual(body["valid"], False)
+        self.assertIn("claim it", body["message"])
+
+    def test_tc2b_released_machine_still_reads_as_unclaimed(self):
+        """A released (removed_at set) Machine must NOT count as claimed -- same three-state
+        logic add_machine_view uses (STEP 2.7), not the pre-2.7 'any Machine row exists' rule."""
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, removed_at=timezone.now()
+        )
+
+        response = self._post(lic.license_key)
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_tc3_nonexistent_license_key_returns_404(self):
+        response = self._post("ZZZZZZZZZZZZZZZ")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["valid"], False)
+
+    def test_tc4_empty_license_key_returns_400(self):
+        response = self._post("")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["valid"], False)
+
+    def test_tc4b_missing_license_key_field_returns_400(self):
+        response = self.client.post(self.url, data=json.dumps({}), content_type="application/json")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_tc4c_malformed_json_body_returns_400(self):
+        response = self.client.post(self.url, data="not json", content_type="application/json")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_tc5_rate_limit_triggers_after_threshold_exceeded(self):
+        """Proves the limiter actually fires, not just that it's wired up: hammer the endpoint
+        past RATE_LIMIT_MAX_ATTEMPTS from the same client IP and confirm a 429 shows up, with
+        requests under the threshold all still getting a normal (non-429) response."""
+        from machines.views import RATE_LIMIT_MAX_ATTEMPTS
+
+        responses = [self._post("NONEXISTENTKEYXX") for _ in range(RATE_LIMIT_MAX_ATTEMPTS)]
+        for response in responses:
+            self.assertNotEqual(response.status_code, 429)
+
+        limited_response = self._post("NONEXISTENTKEYXX")
+        self.assertEqual(limited_response.status_code, 429)
+        self.assertEqual(limited_response.json()["valid"], False)
+
+    def test_tc5b_rate_limit_is_keyed_per_ip_not_global(self):
+        """A different client IP must get its own, independent counter."""
+        from machines.views import RATE_LIMIT_MAX_ATTEMPTS
+
+        for _ in range(RATE_LIMIT_MAX_ATTEMPTS):
+            self._post("NONEXISTENTKEYXX")
+        exhausted_response = self._post("NONEXISTENTKEYXX")
+        self.assertEqual(exhausted_response.status_code, 429)
+
+        fresh_ip_response = self.client.post(
+            self.url,
+            data=json.dumps({"license_key": "NONEXISTENTKEYXX"}),
+            content_type="application/json",
+            REMOTE_ADDR="10.0.0.99",
+        )
+        self.assertNotEqual(fresh_ip_response.status_code, 429)
+
+    def test_get_method_rejected(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 405)
+
+    def test_endpoint_never_creates_or_modifies_machine_or_license_rows(self):
+        """This is read-only validation, not a second claim path -- explicit non-goal check."""
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        machine_count_before = Machine.objects.count()
+        license_count_before = License.objects.count()
+
+        self._post(lic.license_key)  # unclaimed -> 409
+        self._post("SOMENONEXISTENTKEY")  # -> 404
+
+        self.assertEqual(Machine.objects.count(), machine_count_before)
+        self.assertEqual(License.objects.count(), license_count_before)
+        lic.refresh_from_db()
+        self.assertIsNone(lic.account)
+
+    def test_csrf_exempt_like_the_paymongo_webhook(self):
+        """Confirms the box (no Django session/CSRF token) can actually call this without a 403,
+        same as the existing paymongo_webhook_view pattern this endpoint mirrors."""
+        csrf_client = self.client_class(enforce_csrf_checks=True)
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = csrf_client.post(
+            self.url, data=json.dumps({"license_key": lic.license_key}), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, 200)
