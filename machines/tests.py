@@ -1,10 +1,12 @@
 import json
 from datetime import timedelta
 from io import StringIO
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.management import call_command
+from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -592,3 +594,166 @@ class ValidateLicenseViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+
+
+class AttachToNewMachineAdminActionTests(TestCase):
+    """
+    LicenseAdmin's "Attach to a new Machine" action -- mirrors
+    dashboard/views.py::add_machine_view's three-state claim logic (fresh create / reactivate a
+    released Machine / reject an already-attached one), applied from the admin side where an
+    explicit Account must be chosen rather than assumed from a logged-in session. Test pattern
+    (force_login as a superuser, POST to the changelist to get the action redirect, then POST to
+    the intermediate form URL) mirrors accounts/tests.py's AccountAdmin gift_points_action tests.
+    """
+
+    def setUp(self):
+        self.admin_account = Account.objects.create_superuser(
+            phone_number="09170000001", display_name="Admin", password="testpass123"
+        )
+        self.target_account = Account.objects.create_user(
+            phone_number="09171112222", display_name="Target Operator"
+        )
+        self.client.force_login(self.admin_account)
+
+    def _attach_url(self, ids):
+        return f"{reverse('admin:machines_license_attach_to_machine')}?ids={ids}"
+
+    def test_action_redirects_to_intermediate_form(self):
+        lic = License.objects.create(account=None)
+        resp = self.client.post(
+            reverse("admin:machines_license_changelist"),
+            {"action": "attach_to_new_machine", "_selected_action": [lic.pk]},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("admin:machines_license_attach_to_machine"), resp.url)
+        self.assertIn(f"ids={lic.pk}", resp.url)
+
+    def test_unclaimed_license_creates_machine_and_sets_account(self):
+        lic = License.objects.create(account=None)
+        machine_count_before = Machine.objects.count()
+
+        resp = self.client.post(
+            self._attach_url(lic.pk),
+            {"ids": str(lic.pk), "account": self.target_account.pk, "nickname": "Front Counter"},
+        )
+        self.assertRedirects(resp, reverse("admin:machines_license_changelist"))
+
+        self.assertEqual(Machine.objects.count(), machine_count_before + 1)
+        machine = Machine.objects.get(license_key=lic.license_key)
+        self.assertEqual(machine.owner_id, self.target_account.pk)
+        self.assertEqual(machine.nickname, "Front Counter")
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.account_id, self.target_account.pk)
+        self.assertTrue(lic.is_claimed)
+
+    def test_already_attached_license_rejected_no_changes(self):
+        lic = License.objects.create(account=self.admin_account)
+        machine = Machine.objects.create(
+            owner=self.admin_account, license_key=lic.license_key, nickname="Original"
+        )
+        machine_count_before = Machine.objects.count()
+
+        resp = self.client.post(
+            self._attach_url(lic.pk),
+            {"ids": str(lic.pk), "account": self.target_account.pk, "nickname": "Hijacked"},
+        )
+        self.assertRedirects(resp, reverse("admin:machines_license_changelist"))
+
+        self.assertEqual(Machine.objects.count(), machine_count_before)  # no new Machine
+        machine.refresh_from_db()
+        self.assertEqual(machine.owner_id, self.admin_account.pk)  # untouched
+        self.assertEqual(machine.nickname, "Original")  # untouched
+
+    def test_released_license_reactivates_same_machine_row(self):
+        lic = License.objects.create(account=self.admin_account)
+        machine = Machine.objects.create(
+            owner=self.admin_account,
+            license_key=lic.license_key,
+            nickname="Old Name",
+            days_remaining=42,
+            removed_at=timezone.now(),
+        )
+        machine_count_before = Machine.objects.count()
+
+        resp = self.client.post(
+            self._attach_url(lic.pk),
+            {"ids": str(lic.pk), "account": self.target_account.pk, "nickname": "New Name"},
+        )
+        self.assertRedirects(resp, reverse("admin:machines_license_changelist"))
+
+        self.assertEqual(Machine.objects.count(), machine_count_before)  # no duplicate row
+        machine.refresh_from_db()
+        self.assertEqual(machine.owner_id, self.target_account.pk)
+        self.assertEqual(machine.nickname, "New Name")
+        self.assertIsNone(machine.removed_at)
+        self.assertEqual(machine.days_remaining, 42)  # balance survives the reactivation
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.account_id, self.target_account.pk)
+
+    def test_race_condition_integrity_error_caught_cleanly(self):
+        """
+        Simulates another request winning the race between this view's own pre-check and its
+        Machine.objects.create() call -- Machine.license_key's DB-level unique constraint is the
+        real guarantee, same as add_machine_view's own IntegrityError handling. Patched directly
+        rather than spinning up real concurrent requests, same reasoning dashboard/views.py's own
+        comment gives for why the DB constraint (not the pre-check) is the actual guarantee.
+        """
+        lic = License.objects.create(account=None)
+        machine_count_before = Machine.objects.count()
+
+        with patch(
+            "machines.admin.Machine.objects.create",
+            side_effect=IntegrityError("duplicate license_key"),
+        ):
+            resp = self.client.post(
+                self._attach_url(lic.pk),
+                {"ids": str(lic.pk), "account": self.target_account.pk, "nickname": ""},
+            )
+
+        self.assertRedirects(resp, reverse("admin:machines_license_changelist"))
+        self.assertEqual(Machine.objects.count(), machine_count_before)  # no partial row
+        lic.refresh_from_db()
+        self.assertIsNone(lic.account_id)  # not claimed -- the whole atomic block rolled back
+
+    def test_multi_select_one_failure_does_not_block_the_others(self):
+        good_lic_1 = License.objects.create(account=None)
+        good_lic_2 = License.objects.create(account=None)
+        already_claimed_lic = License.objects.create(account=self.admin_account)
+        Machine.objects.create(owner=self.admin_account, license_key=already_claimed_lic.license_key)
+
+        ids = f"{good_lic_1.pk},{good_lic_2.pk},{already_claimed_lic.pk}"
+        resp = self.client.post(
+            self._attach_url(ids),
+            {"ids": ids, "account": self.target_account.pk, "nickname": ""},
+        )
+        self.assertRedirects(resp, reverse("admin:machines_license_changelist"))
+
+        self.assertTrue(Machine.objects.filter(license_key=good_lic_1.license_key).exists())
+        self.assertTrue(Machine.objects.filter(license_key=good_lic_2.license_key).exists())
+        good_lic_1.refresh_from_db()
+        good_lic_2.refresh_from_db()
+        self.assertEqual(good_lic_1.account_id, self.target_account.pk)
+        self.assertEqual(good_lic_2.account_id, self.target_account.pk)
+        # The already-claimed one stays exactly as it was -- still owned by admin_account, not
+        # silently reassigned to target_account.
+        already_claimed_lic.refresh_from_db()
+        self.assertEqual(already_claimed_lic.account_id, self.admin_account.pk)
+
+    def test_no_account_selected_reprompts_form_without_side_effects(self):
+        lic = License.objects.create(account=None)
+        resp = self.client.post(self._attach_url(lic.pk), {"ids": str(lic.pk), "nickname": "x"})
+        self.assertEqual(resp.status_code, 200)  # re-renders form with validation error
+        self.assertFalse(Machine.objects.filter(license_key=lic.license_key).exists())
+        lic.refresh_from_db()
+        self.assertIsNone(lic.account_id)
+
+    def test_non_staff_cannot_reach_the_action(self):
+        self.client.logout()
+        regular = Account.objects.create_user(phone_number="09175556666", display_name="Regular")
+        self.client.force_login(regular)
+        lic = License.objects.create(account=None)
+        resp = self.client.get(self._attach_url(lic.pk))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/admin/login/", resp.url)
