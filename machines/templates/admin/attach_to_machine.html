@@ -1,7 +1,14 @@
 {% extends "admin/base_site.html" %}
 
+{% block extrahead %}
+  {{ block.super }}
+  {# Required for the searchable Account widget below (AutocompleteSelect / select2) -- without
+     this, the field falls back to rendering as a plain, unstyled <select> with no search box. #}
+  {{ form.media }}
+{% endblock %}
+
 {% block content %}
-<p>Attaching the following license key(s) to a new Machine:</p>
+<p>Attaching the following license key(s) to a Machine on the operator's dashboard:</p>
 <ul>
   {% for license in licenses %}
     <li>
@@ -38,7 +45,7 @@
     <p class="help">{{ form.nickname.help_text }}</p>
   </div>
   <div class="submit-row">
-    <input type="submit" value="Attach to a new Machine" class="default">
+    <input type="submit" value="Attach to Dashboard" class="default">
   </div>
 </form>
 {% endblock %}
