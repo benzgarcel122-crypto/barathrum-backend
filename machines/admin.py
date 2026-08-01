@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin, messages
+from django.contrib.admin.widgets import AutocompleteSelect
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
@@ -21,9 +22,15 @@ class AttachToMachineForm(forms.Form):
     """
     account = forms.ModelChoiceField(
         queryset=Account.objects.all(),
+        # License already has a real `account` ForeignKey to Account (see models.py) -- reusing
+        # that field here (rather than defining a new one) is what lets this widget hit Django
+        # admin's existing /admin/autocomplete/ endpoint and search by phone number/display name
+        # via AccountAdmin.search_fields, instead of rendering every Account as one long <select>
+        # dropdown. Requires LicenseAdmin.autocomplete_fields = ["account"] below.
+        widget=AutocompleteSelect(License._meta.get_field("account"), admin.site),
         label="Attach to Account",
-        help_text="Which Account's dashboard this Machine will appear under. Not guessed or "
-                  "defaulted from the logged-in staff user -- pick explicitly.",
+        help_text="Search by phone number or name. Not guessed or defaulted from the logged-in "
+                  "staff user -- pick explicitly.",
     )
     nickname = forms.CharField(
         required=False,
@@ -119,6 +126,11 @@ class LicenseAdmin(admin.ModelAdmin):
     search_fields = ["license_key", "account__phone_number", "generated_by__phone_number"]
     readonly_fields = ["license_key", "generated_by", "created_at"]
     actions = ["attach_to_new_machine"]
+    # Enables Django admin's built-in searchable widget (search by phone number or display
+    # name, via AccountAdmin.search_fields) for the `account` field -- both here on License's
+    # own Change form, and reused by AttachToMachineForm above via the same underlying
+    # /admin/autocomplete/ endpoint.
+    autocomplete_fields = ["account"]
 
     def get_fields(self, request, obj=None):
         """
@@ -154,11 +166,14 @@ class LicenseAdmin(admin.ModelAdmin):
         ]
         return custom_urls + super().get_urls()
 
-    @admin.action(description="Attach to a new Machine")
+    @admin.action(description="Attach to Dashboard")
     def attach_to_new_machine(self, request, queryset):
         """
-        Entry point from the changelist "Action" dropdown. This is a REGISTRATION/ATTACHMENT
-        mechanism, not license activation -- it sets License.is_claimed the same way clicking
+        Entry point from the changelist "Action" dropdown. Internal name/URL kept as
+        "attach_to_new_machine"/"attach-to-machine" for continuity with existing code and tests
+        -- only the user-facing dropdown label changed (PM feedback: "Attach to a new Machine"
+        read as confusingly close to "Delete selected license" in the dropdown). This is a
+        REGISTRATION/ATTACHMENT mechanism, not license activation -- it sets License.is_claimed the same way clicking
         Add Machine on the dashboard already does (an active Machine row exists for this key).
         It does not prove an operator physically owns a box; that distinction (box-side
         activation vs. dashboard registration) doesn't exist in this codebase yet (see MPD
@@ -277,7 +292,7 @@ class LicenseAdmin(admin.ModelAdmin):
 
         context = {
             **self.admin_site.each_context(request),
-            "title": "Attach to a new Machine",
+            "title": "Attach to Dashboard",
             "form": form,
             "licenses": licenses,
             "id_list": id_list,
