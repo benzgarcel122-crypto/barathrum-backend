@@ -757,3 +757,98 @@ class AttachToNewMachineAdminActionTests(TestCase):
         resp = self.client.get(self._attach_url(lic.pk))
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/admin/login/", resp.url)
+
+    def test_dropdown_shows_renamed_label(self):
+        """PM feedback: the changelist Action dropdown originally showed "Attach to a new
+        Machine," which read as confusingly close to "Delete selected license." Renamed to
+        "Attach to Dashboard" -- confirm the changelist page actually renders that text.
+        Needs at least one License row -- Django's admin hides the actions dropdown entirely
+        on an empty changelist."""
+        License.objects.create(account=None)
+        resp = self.client.get(reverse("admin:machines_license_changelist"))
+        self.assertContains(resp, "Attach to Dashboard")
+        self.assertNotContains(resp, "Attach to a new Machine")
+
+
+class AttachToDashboardAccountSearchTests(TestCase):
+    """
+    PM feedback: with many dashboard accounts, picking one from a single long <select> dropdown
+    is a hassle -- the Account field on the "Attach to Dashboard" form now uses Django admin's
+    built-in searchable widget (AutocompleteSelect / select2), searching by phone number or
+    display name via AccountAdmin.search_fields, over the same /admin/autocomplete/ endpoint
+    Django's own admin change forms use.
+
+    NOTE on phone number search: Account.phone_number is stored normalized (+63XXXXXXXXXX, see
+    accounts/models.py::normalize_phone_number). AccountAdmin.get_search_results now also tries
+    normalize_phone_number(search_term) so a staff member can type the local format they'd
+    naturally use (e.g. "09171112222") and still match the normalized stored value -- this
+    benefits AccountAdmin's own changelist search box too, not just this widget, since both go
+    through the same search_fields/get_search_results.
+    """
+
+    def setUp(self):
+        self.admin_account = Account.objects.create_superuser(
+            phone_number="09170000001", display_name="Admin", password="testpass123"
+        )
+        self.match_by_phone = Account.objects.create_user(
+            phone_number="09171112222", display_name="Corner Store"
+        )
+        self.match_by_name = Account.objects.create_user(
+            phone_number="09173334444", display_name="Benz Garcel"
+        )
+        self.non_match = Account.objects.create_user(
+            phone_number="09175556666", display_name="Someone Else"
+        )
+        self.client.force_login(self.admin_account)
+
+    def _autocomplete(self, term):
+        return self.client.get(
+            reverse("admin:autocomplete"),
+            {
+                "app_label": "machines",
+                "model_name": "license",
+                "field_name": "account",
+                "term": term,
+            },
+        )
+
+    def test_account_field_uses_autocomplete_widget(self):
+        lic = License.objects.create(account=None)
+        resp = self.client.get(
+            f"{reverse('admin:machines_license_attach_to_machine')}?ids={lic.pk}"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'class="admin-autocomplete"')
+        self.assertContains(resp, 'data-ajax--url="/admin/autocomplete/"')
+        self.assertContains(resp, 'data-app-label="machines"')
+        self.assertContains(resp, 'data-field-name="account"')
+
+    def test_search_by_phone_number_in_local_format(self):
+        """The format a staff member would actually type -- see class docstring."""
+        resp = self._autocomplete("09171112222")
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        ids = [r["id"] for r in results]
+        self.assertIn(str(self.match_by_phone.pk), ids)
+        self.assertNotIn(str(self.non_match.pk), ids)
+
+    def test_search_by_phone_number_in_stored_normalized_format(self):
+        resp = self._autocomplete("639171112222")
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        ids = [r["id"] for r in results]
+        self.assertIn(str(self.match_by_phone.pk), ids)
+        self.assertNotIn(str(self.non_match.pk), ids)
+
+    def test_search_by_display_name(self):
+        resp = self._autocomplete("Benz")
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        ids = [r["id"] for r in results]
+        self.assertIn(str(self.match_by_name.pk), ids)
+        self.assertNotIn(str(self.non_match.pk), ids)
+
+    def test_no_match_returns_empty_results_not_error(self):
+        resp = self._autocomplete("nonexistent search term xyz")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["results"], [])
