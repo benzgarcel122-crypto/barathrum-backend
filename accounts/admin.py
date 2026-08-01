@@ -8,7 +8,7 @@ from django.db import transaction as db_transaction
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
 
-from .models import Account, OTPCode, PointTransfer
+from .models import Account, OTPCode, PointTransfer, normalize_phone_number
 
 # Groups (Django's built-in auth Group model) is registered automatically by
 # django.contrib.auth's own admin.py before this module loads (see INSTALLED_APPS order in
@@ -59,6 +59,29 @@ class AccountAdmin(UserAdmin):
             },
         ),
     )
+
+    def get_search_results(self, request, queryset, search_term):
+        """
+        Phone numbers are stored normalized (+63XXXXXXXXXX, see
+        accounts/models.py::normalize_phone_number) -- plain icontains against the raw
+        search_term alone means a staff member typing the local format they'd naturally use
+        (e.g. "09171234567") gets zero matches, since that string isn't a substring of the
+        stored "+639171112222". Also try the normalized form of the term and OR the two
+        querysets together, so both formats work. Falls back silently to the unnormalized-only
+        result if the term isn't a phone-number-shaped string at all (e.g. a display_name
+        search) -- normalize_phone_number raising ValueError there is expected, not an error.
+        This also fixes phone number search for every AutocompleteSelect widget elsewhere in
+        the admin that searches Account through this same search_fields list (e.g. LicenseAdmin's
+        "Attach to Dashboard" action), not just this changelist's own search box.
+        """
+        queryset, may_have_duplicates = super().get_search_results(request, queryset, search_term)
+        try:
+            normalized = normalize_phone_number(search_term)
+        except ValueError:
+            normalized = None
+        if normalized and normalized != search_term:
+            queryset |= self.model.objects.filter(phone_number__icontains=normalized)
+        return queryset, may_have_duplicates
 
     def get_urls(self):
         # Extra admin-only URL for the "Gift points" action's intermediate form. Same pattern
