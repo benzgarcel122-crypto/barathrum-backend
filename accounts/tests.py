@@ -117,11 +117,12 @@ class GiftPointsAdminActionTests(TestCase):
 
 class OTPDeliveryTests(TestCase):
     """
-    STEP 2.1a: real SMS delivery via Semaphore, 60s issuance cooldown, fail-closed error
-    handling, plus regression coverage for verify_view's pre-existing lockout/expiry logic (which
-    this task did not change, but which previously had zero test coverage -- Session 38 finding
-    #12). `accounts.semaphore_client.send_otp` is mocked in every test here; the real Semaphore
-    API is never called.
+    STEP 2.1a: real SMS delivery via Semaphore, 180s issuance cooldown (raised from the original
+    60s post-launch to control paid-SMS spend), fail-closed error handling, plus regression
+    coverage for verify_view's pre-existing lockout/expiry logic (which this task did not change,
+    but which previously had zero test coverage -- Session 38 finding #12).
+    `accounts.semaphore_client.send_otp` is mocked in every test here; the real Semaphore API is
+    never called.
     """
 
     def setUp(self):
@@ -133,13 +134,13 @@ class OTPDeliveryTests(TestCase):
         self.mock_send_otp = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_second_issuance_within_60s_is_blocked(self):
+    def test_second_issuance_within_cooldown_is_blocked(self):
         first = OTPCode.issue("09171234567")
         self.assertEqual(self.mock_send_otp.call_count, 1)
 
         wait = OTPCode.seconds_until_next_issue_allowed("+639171234567")
         self.assertGreater(wait, 0)
-        self.assertLessEqual(wait, 60)
+        self.assertLessEqual(wait, OTPCode.OTP_ISSUANCE_COOLDOWN_SECONDS)
 
         resp = self.client.post("/signup/", {"phone_number": "09171234567", "display_name": "X"})
         self.assertEqual(resp.status_code, 429)
@@ -148,11 +149,13 @@ class OTPDeliveryTests(TestCase):
         self.assertEqual(self.mock_send_otp.call_count, 1)
         self.assertEqual(OTPCode.objects.filter(phone_number="+639171234567").count(), 1)
 
-    def test_issuance_allowed_again_after_60s(self):
+    def test_issuance_allowed_again_after_cooldown(self):
         first = OTPCode.issue("09171234567")
-        # Backdate rather than sleep in the test, per the task's explicit instruction.
+        # Backdate rather than sleep in the test, per the task's explicit instruction. Backdate by
+        # cooldown + 1s so this stays correct if the cooldown constant changes again later.
         OTPCode.objects.filter(pk=first.pk).update(
-            created_at=timezone.now() - timedelta(seconds=61)
+            created_at=timezone.now()
+            - timedelta(seconds=OTPCode.OTP_ISSUANCE_COOLDOWN_SECONDS + 1)
         )
 
         self.assertEqual(OTPCode.seconds_until_next_issue_allowed("+639171234567"), 0)
