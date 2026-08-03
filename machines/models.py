@@ -224,6 +224,16 @@ class License(models.Model):
     # of letting it eventually exit via the 20-day zero-balance cleanup job.
     release_locked_until = models.DateTimeField(null=True, blank=True)
 
+    # Box-side activation (End Goals #13-14, MPD Session 65-66 design, built for real Session 86).
+    # Set the first time a real box successfully validates this key via
+    # machines/views.py::validate_license_view -- this is the actual, physical "this box now runs
+    # with this key" event, entirely independent of `account`/is_claimed above. NULL = never
+    # activated by any box yet. Deliberately NEVER cleared by anything in this codebase --
+    # unbinding (End Goals #20) is a future, separate feature (tracker row 19) that would need its
+    # own explicit action to clear this; nothing here does that automatically, so a box that goes
+    # offline or a license that gets unclaimed on the dashboard does NOT lose its activated_at.
+    activated_at = models.DateTimeField(null=True, blank=True)
+
     RELEASE_MAX_FAILED_ATTEMPTS = 5
 
     def save(self, *args, **kwargs):
@@ -243,11 +253,23 @@ class License(models.Model):
         show as claimed/unavailable.
         """
         return Machine.objects.filter(license_key=self.license_key, removed_at__isnull=True).exists()
- 
+
+    @property
+    def is_activated(self):
+        """
+        True once a real box has successfully validated this key at least once (see
+        `activated_at` above). Deliberately independent of `is_claimed` -- per the End Goals
+        (MPD, Session 82) closing note, a license can be claimed without being activated,
+        activated without being claimed, both, or neither. This property answers only "has a box
+        ever bound to this key," nothing about which dashboard account owns it.
+        """
+        return self.activated_at is not None
+
     def __str__(self):
         claimed = " (claimed)" if self.is_claimed else " (unclaimed)"
+        activated = " (activated)" if self.is_activated else " (not activated)"
         owner = f" — claimed by {self.account.phone_number}" if self.account_id else ""
-        return f"{self.license_key}{claimed}{owner}"
+        return f"{self.license_key}{claimed}{activated}{owner}"
  
  
 class Transaction(models.Model):
