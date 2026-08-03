@@ -445,9 +445,14 @@ class TopupClearsZeroBalanceCountdownTests(TestCase):
 
 class ValidateLicenseViewTests(TestCase):
     """
-    POST /api/box/validate-license/ -- box-pairing license validation endpoint, per the task's
-    5 required cases (claimed / unclaimed / nonexistent / empty / rate-limited) plus a couple of
-    supporting checks (no Machine/License mutation, normalization, wrong-method rejection).
+    POST /api/box/validate-license/ -- box-side license ACTIVATION endpoint.
+
+    Rewritten Session 86 (MPD): this endpoint used to be read-only and required is_claimed=True
+    (409 otherwise). It now WRITES License.activated_at on first successful validation, and no
+    longer requires the license to be claimed first -- activation and claiming are independent
+    events (End Goals, MPD Session 82 closing note). The five original required cases (claimed /
+    unclaimed / nonexistent / empty / rate-limited) are kept, but "unclaimed" now expects 200 +
+    activation, not 409 -- that's the actual behavior change this rewrite makes.
 
     IMPORTANT: this endpoint's rate limiter is keyed by client IP and stored in Django's default
     cache, which persists across tests within the same test-process run (it's not reset by
@@ -470,14 +475,17 @@ class ValidateLicenseViewTests(TestCase):
     def test_reverse_resolves_to_the_documented_path(self):
         self.assertEqual(reverse("machines:validate_license"), self.url)
 
-    def test_tc1_valid_claimed_license_key_returns_200(self):
+    def test_tc1_valid_claimed_license_key_returns_200_and_activates(self):
         lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
         Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+        self.assertIsNone(lic.activated_at)
 
         response = self._post(lic.license_key)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["valid"], True)
+        lic.refresh_from_db()
+        self.assertIsNotNone(lic.activated_at)
 
     def test_tc1b_lowercase_and_whitespace_input_normalized_same_as_claim_view(self):
         """Same .strip().upper() normalization as add_machine_view's license_key_input --
@@ -489,19 +497,30 @@ class ValidateLicenseViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_tc2_valid_unclaimed_license_key_returns_409_with_actionable_message(self):
+    def test_tc2_valid_unclaimed_license_key_now_returns_200_and_activates(self):
+        """
+        BEHAVIOR CHANGE, Session 86: previously this was a 409 ("hasn't been claimed yet").
+        Per the End Goals (MPD, Session 82), activation and claiming are independent -- a license
+        can be activated at a box before anyone ever clicks Add Machine on the dashboard. This is
+        exactly the scenario a Developer session (Session 85) correctly flagged as a real tension
+        between the old behavior and the End Goals -- this rewrite is the actual resolution.
+        """
         lic = License.objects.create(account=None, generated_by=self.acc1)
+        self.assertIsNone(lic.activated_at)
 
         response = self._post(lic.license_key)
 
-        self.assertEqual(response.status_code, 409)
-        body = response.json()
-        self.assertEqual(body["valid"], False)
-        self.assertIn("claim it", body["message"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["valid"], True)
+        lic.refresh_from_db()
+        self.assertIsNotNone(lic.activated_at)
+        # Still genuinely unclaimed -- activation must not have touched `account`/is_claimed.
+        self.assertIsNone(lic.account)
+        self.assertFalse(lic.is_claimed)
 
-    def test_tc2b_released_machine_still_reads_as_unclaimed(self):
-        """A released (removed_at set) Machine must NOT count as claimed -- same three-state
-        logic add_machine_view uses (STEP 2.7), not the pre-2.7 'any Machine row exists' rule."""
+    def test_tc2b_released_machine_license_also_activates_successfully(self):
+        """A released (removed_at set) Machine means is_claimed is False -- and per the same
+        behavior change as tc2 above, that no longer blocks activation."""
         lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
         Machine.objects.create(
             owner=self.acc1, license_key=lic.license_key, removed_at=timezone.now()
@@ -509,7 +528,23 @@ class ValidateLicenseViewTests(TestCase):
 
         response = self._post(lic.license_key)
 
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 200)
+        lic.refresh_from_db()
+        self.assertIsNotNone(lic.activated_at)
+
+    def test_activation_is_idempotent_second_call_does_not_change_timestamp(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+
+        first_response = self._post(lic.license_key)
+        self.assertEqual(first_response.status_code, 200)
+        lic.refresh_from_db()
+        first_activated_at = lic.activated_at
+        self.assertIsNotNone(first_activated_at)
+
+        second_response = self._post(lic.license_key)
+        self.assertEqual(second_response.status_code, 200)
+        lic.refresh_from_db()
+        self.assertEqual(lic.activated_at, first_activated_at)
 
     def test_tc3_nonexistent_license_key_returns_404(self):
         response = self._post("ZZZZZZZZZZZZZZZ")
@@ -568,19 +603,24 @@ class ValidateLicenseViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 405)
 
-    def test_endpoint_never_creates_or_modifies_machine_or_license_rows(self):
-        """This is read-only validation, not a second claim path -- explicit non-goal check."""
+    def test_endpoint_never_creates_or_modifies_machine_rows_or_license_account(self):
+        """
+        Updated Session 86: this endpoint DOES now modify License.activated_at (that's the whole
+        point of this rewrite) -- but it must still never touch Machine rows or License.account.
+        Activation is not a second claim path; it answers a completely different question.
+        """
         lic = License.objects.create(account=None, generated_by=self.acc1)
         machine_count_before = Machine.objects.count()
         license_count_before = License.objects.count()
 
-        self._post(lic.license_key)  # unclaimed -> 409
+        self._post(lic.license_key)  # unclaimed, now activates -> 200
         self._post("SOMENONEXISTENTKEY")  # -> 404
 
         self.assertEqual(Machine.objects.count(), machine_count_before)
         self.assertEqual(License.objects.count(), license_count_before)
         lic.refresh_from_db()
-        self.assertIsNone(lic.account)
+        self.assertIsNone(lic.account)  # claim status untouched
+        self.assertIsNotNone(lic.activated_at)  # activation status IS touched, by design
 
     def test_csrf_exempt_like_the_paymongo_webhook(self):
         """Confirms the box (no Django session/CSRF token) can actually call this without a 403,
