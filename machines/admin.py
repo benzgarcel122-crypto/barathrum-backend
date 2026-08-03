@@ -122,9 +122,9 @@ class TransactionAdmin(admin.ModelAdmin):
  
 @admin.register(License)
 class LicenseAdmin(admin.ModelAdmin):
-    list_display = ["license_key", "generated_by", "account", "is_claimed", "created_at"]
+    list_display = ["license_key", "generated_by", "account", "is_claimed", "is_activated", "created_at"]
     search_fields = ["license_key", "account__phone_number", "generated_by__phone_number"]
-    readonly_fields = ["license_key", "generated_by", "created_at"]
+    readonly_fields = ["license_key", "generated_by", "created_at", "activated_at"]
     actions = ["attach_to_new_machine"]
     # Enables Django admin's built-in searchable widget (search by phone number or display
     # name, via AccountAdmin.search_fields) for the `account` field -- both here on License's
@@ -143,14 +143,22 @@ class LicenseAdmin(admin.ModelAdmin):
         Session 36: generated_by only appears on the Change page, not Add -- a License created
         directly through admin has no real "generator" in the app-usage sense this field tracks,
         so there's nothing meaningful to show for it on the Add form.
+
+        Session 86: activated_at only appears on the Change page too, same reasoning as
+        generated_by -- a License created directly through admin has never actually been
+        activated by a real box, so there's nothing meaningful to show on the Add form either.
         """
         if obj is None:
             return ["license_key", "created_at"]
-        return ["license_key", "generated_by", "account", "created_at"]
+        return ["license_key", "generated_by", "account", "created_at", "activated_at"]
  
     @admin.display(boolean=True)
     def is_claimed(self, obj):
         return obj.is_claimed
+
+    @admin.display(boolean=True, description="Activated")
+    def is_activated(self, obj):
+        return obj.is_activated
 
     def get_urls(self):
         # Extra admin-only URL for "Attach to a new Machine"'s intermediate form -- same
