@@ -2,10 +2,11 @@ import json
 
 from django.core.cache import cache
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .models import License, Machine
+from .models import License
 
 # --- Box-pairing license validation -----------------------------------------------------------
 #
@@ -65,26 +66,45 @@ def _rate_limited(request):
 @require_POST
 def validate_license_view(request):
     """
-    POST /api/box/validate-license/ -- read-only license-key validation for the box-agent Setup
-    Wizard (barathrum-box-agent's portal_app.py::setup_wizard, screen 1). Mirrors
-    machines/webhooks.py's paymongo_webhook_view pattern (csrf_exempt + require_POST) since, like
-    that endpoint, the caller is another machine (a box on the operator's LAN) with no Django
-    session/CSRF token to present -- the license_key itself is the only credential, per this
-    task's explicit non-goal of not building a separate box auth system.
+    POST /api/box/validate-license/ -- box-side license ACTIVATION endpoint for the box-agent
+    Setup Wizard (barathrum-box-agent's portal_app.py::setup_wizard, screen 1).
 
-    This does NOT create or modify any License/Machine row -- it only reads state that
-    dashboard/views.py::add_machine_view already establishes via the one real claim flow. "Claimed"
-    here is defined identically to License.is_claimed (an ACTIVE Machine, removed_at IS NULL,
-    exists for this license_key) -- deliberately not re-implemented as a second definition.
+    Built for real, Session 86 (MPD), replacing the original read-only, claim-gated version from
+    Session 62-63. This is the real activation write-path first proposed as an unbuilt design in
+    Session 65-66 (tracker row 19) -- PM explicitly chose to build it now rather than wait for
+    STEP 1 hardware, since this half of the work (the Django/Python side) needs no physical box to
+    build or test correctly, unlike the box-side GPIO/hostapd work, which genuinely does.
 
-    Response shape: as of this task, barathrum-box-agent's setup_wizard() has this call fully
-    stubbed (accepts any non-empty key, comment literally says "STUB: real validation call... goes
-    here") and its setup.html template displays nothing beyond the raw input field -- confirmed by
-    reading both files directly. There is no existing response contract on the box side to match
-    yet, so the shape below is a forward-looking, deliberately minimal design (a `valid` boolean
-    the wizard can branch on, plus a `message` it can show verbatim on failure) rather than a
-    guess at fields nothing currently consumes. Wiring the box side to actually call this endpoint
-    is explicitly a separate follow-up task per this task's own scope.
+    What changed from the original version:
+    - No longer requires License.is_claimed to be True. Per the End Goals (MPD, Session 82)
+      closing note, activation and claiming are independent events that can happen in either
+      order -- a license can be validated/activated at the box before anyone ever clicks Add
+      Machine on the dashboard. The old 409 "hasn't been claimed yet" gate is removed entirely.
+    - This call now WRITES: the first time a real box successfully validates an existing license
+      key, License.activated_at is set to now(). Previously this endpoint was purely read-only.
+    - Idempotent by construction: uses .filter(activated_at__isnull=True).update(...) rather than
+      a read-then-write pattern, so two near-simultaneous first-calls for the same key can't both
+      "win" and produce inconsistent state -- exactly one of them actually sets the timestamp,
+      and both still receive the same 200 "valid" response either way (the caller doesn't need to
+      know or care which request happened to win the race).
+
+    Known, explicitly accepted limitation -- NOT resolved by this change, still gated on real
+    hardware (Session 65 open question #2, unchanged): there is no way today to distinguish "the
+    same physical box re-pairing after a reflash" from "a different box presenting a key that was
+    already activated elsewhere." Both cases hit this same code path and both succeed. This
+    endpoint does not attempt to guess a box-identity signal (MAC address, install token, etc.)
+    that doesn't exist yet -- building a wrong guess now would be worse than leaving this
+    honestly open, per this project's own standing preference for flagging real forks rather than
+    inventing an answer. This means, today, any device that knows a real, previously-activated
+    license key can "re-validate" successfully -- acceptable for now because the license_key
+    itself is already the sole credential this whole flow relies on (same trust model the
+    endpoint has always used), and because closing this gap requires information (real box
+    identity) that simply doesn't exist until STEP 1 hardware does.
+
+    Rate limiting and normalization unchanged from the original version -- still mirrors
+    machines/webhooks.py's paymongo_webhook_view pattern (csrf_exempt + require_POST), still the
+    same license_key normalization as add_machine_view's, still the same 400 (malformed/empty) and
+    404 (nonexistent key) handling.
     """
     if _rate_limited(request):
         return JsonResponse(
@@ -107,34 +127,19 @@ def validate_license_view(request):
     try:
         license_obj = License.objects.get(license_key=license_key)
     except License.DoesNotExist:
-        # Deliberately the same generic message/shape as the "not yet claimed" case's structure
+        # Deliberately the same generic message/shape as any other failure case's structure
         # (a `valid`/`message` pair, no extra fields) -- only the status code and wording differ,
         # so a timing or response-shape difference beyond the status code itself doesn't leak
         # which case actually happened, per this task's explicit requirement.
         return JsonResponse({"valid": False, "message": "License key not recognized."}, status=404)
 
-    # Same query add_machine_view already runs (via License.is_claimed, defined identically in
-    # machines/models.py) -- not a second definition of "claimed."
-    is_claimed = Machine.objects.filter(
-        license_key=license_obj.license_key, removed_at__isnull=True
-    ).exists()
-
-    if not is_claimed:
-        # 409 Conflict: the license_key resource exists (so 404 would be wrong), but its current
-        # state conflicts with what box-pairing requires of it (an active claim) -- 409 is the
-        # standard status for "request is valid, but the resource's current state doesn't allow
-        # it," which is exactly this case. (410 Gone was considered and rejected: this isn't a
-        # permanently-dead resource, it's expected to transition to claimed via a normal dashboard
-        # action, which 410's semantics don't fit.)
-        return JsonResponse(
-            {
-                "valid": False,
-                "message": (
-                    "This license hasn't been claimed yet — log into your Barathrum dashboard "
-                    "and claim it before finishing box setup."
-                ),
-            },
-            status=409,
-        )
+    # Activation write: idempotent, race-safe first-activation. Matches (and updates) exactly one
+    # row only the first time this key is ever validated -- a second, third, Nth call for an
+    # already-activated key matches zero rows here (activated_at is no longer NULL) and simply
+    # falls through to the same 200 response below, since re-validating an already-activated key
+    # is a normal, expected, successful case, not an error.
+    License.objects.filter(pk=license_obj.pk, activated_at__isnull=True).update(
+        activated_at=timezone.now()
+    )
 
     return JsonResponse({"valid": True, "message": "License validated."}, status=200)
