@@ -142,4 +142,56 @@ def validate_license_view(request):
         activated_at=timezone.now()
     )
 
-    return JsonResponse({"valid": True, "message": "License validated."}, status=200)
+    return JsonResponse(
+        {"valid": True, "message": "License validated.", "license_points": license_obj.license_points},
+        status=200,
+    )
+
+
+# --- Box-side license points sync (End Goals #17) ---------------------------------------------
+#
+# Separate, dedicated rate-limit cache key from validate_license_view's -- box-agent polls this
+# endpoint periodically (every LICENSE_POINTS_SYNC_INTERVAL_SECONDS, box-side), which is a
+# distinct usage pattern from the one-shot Setup Wizard bind call, so the two counters must never
+# share or interfere with each other's remaining budget for the same IP.
+def _license_points_rate_limited(request):
+    cache_key = f"box_license_points:ratelimit:{_client_ip(request)}"
+    try:
+        attempts = cache.incr(cache_key)
+    except ValueError:
+        cache.set(cache_key, 1, timeout=RATE_LIMIT_WINDOW_SECONDS)
+        attempts = 1
+    return attempts > RATE_LIMIT_MAX_ATTEMPTS
+
+
+@csrf_exempt
+@require_POST
+def license_points_view(request):
+    """
+    POST /api/box/license-points/ -- box-side periodic poll target (End Goals #17). Read-only:
+    returns the current license_points balance for an already-known license_key. Same trust
+    model as validate_license_view (the key itself is the credential) and the same normalization/
+    error shape, deliberately -- this is a peer endpoint, not a new pattern.
+    """
+    if _license_points_rate_limited(request):
+        return JsonResponse(
+            {"valid": False, "message": "Too many attempts. Please wait a few minutes and try again."},
+            status=429,
+        )
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"valid": False, "message": "Malformed request body."}, status=400)
+
+    license_key = (payload.get("license_key") or "").strip().upper()
+    if not license_key:
+        return JsonResponse({"valid": False, "message": "Enter your license key."}, status=400)
+
+    try:
+        license_obj = License.objects.get(license_key=license_key)
+    except License.DoesNotExist:
+        return JsonResponse({"valid": False, "message": "License key not recognized."}, status=404)
+
+    return JsonResponse(
+        {"valid": True, "license_points": license_obj.license_points}, status=200
+    )
