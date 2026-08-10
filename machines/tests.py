@@ -162,28 +162,164 @@ class DecrementMachineDaysTests(TestCase):
         self.assertEqual(m3.days_remaining, 0)
 
 
-class RunDailyCronJobsTests(TestCase):
-    """run_daily_cron_jobs wrapper: both jobs run independently, and one failing doesn't skip
-    the other -- the actual mitigation for the shared-Railway-service tradeoff, not just claimed
-    in the docstring."""
+class DecrementLicensePointsTests(TestCase):
+    """
+    decrement_license_points management command -- End Goals #24, mirroring
+    DecrementMachineDaysTests' own test cases exactly (same pattern applied to License.license_points
+    instead of Machine.days_remaining).
+    """
 
     def setUp(self):
         self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
 
-    def test_both_jobs_run_successfully_in_normal_conditions(self):
+    def test_license_with_points_is_decremented_by_one(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+    def test_license_at_zero_stays_at_zero(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=0)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 0)
+
+    def test_double_fire_same_day_does_not_double_decrement(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+        out = StringIO()
+        call_command("decrement_license_points", stdout=out)
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+        self.assertIn("Already ran today", out.getvalue())
+
+    def test_new_ph_calendar_day_decrements_again(self):
+        from machines.models import CronJobRun
+
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+        run_record = CronJobRun.objects.get(job_name="decrement_license_points")
+        run_record.last_run_date -= timedelta(days=1)
+        run_record.save(update_fields=["last_run_date"])
+
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 8)
+
+    def test_never_references_days_remaining_or_balance_points_in_command_code(self):
+        """Direct code check: confirm this command's handle() logic never reads/writes
+        Machine.days_remaining or Account.balance_points -- it only ever touches
+        License.license_points."""
+        import inspect
+
+        from machines.management.commands.decrement_license_points import Command
+
+        source = inspect.getsource(Command.handle)
+        self.assertNotIn("days_remaining", source)
+        self.assertNotIn("balance_points", source)
+
+    def test_multiple_licenses_and_mixed_zero_balances_all_handled_correctly(self):
+        lic1 = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+        lic2 = License.objects.create(
+            account=None,
+            generated_by=Account.objects.create_user(phone_number="09179876543"),
+            license_points=0,
+        )
+        lic3 = License.objects.create(
+            account=None,
+            generated_by=Account.objects.create_user(phone_number="09171112222"),
+            license_points=1,
+        )
+        call_command("decrement_license_points", stdout=StringIO())
+        lic1.refresh_from_db()
+        lic2.refresh_from_db()
+        lic3.refresh_from_db()
+        self.assertEqual(lic1.license_points, 4)
+        self.assertEqual(lic2.license_points, 0)
+        self.assertEqual(lic3.license_points, 0)
+
+    def test_decrement_license_points_guard_is_independent_of_decrement_machine_days_guard(self):
+        """The two jobs' CronJobRun rows must never collide or share a last-run-date -- confirms
+        they're keyed by distinct job_name values."""
+        from machines.models import CronJobRun
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+
+        call_command("decrement_machine_days", stdout=StringIO())
+        # decrement_license_points hasn't run yet -- must still be able to run today, unaffected
+        # by decrement_machine_days already having run today under its own job_name.
+        call_command("decrement_license_points", stdout=StringIO())
+
+        m.refresh_from_db()
+        lic.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
+        self.assertEqual(lic.license_points, 4)
+        self.assertEqual(
+            set(CronJobRun.objects.values_list("job_name", flat=True)),
+            {"decrement_machine_days", "decrement_license_points"},
+        )
+
+
+class RunDailyCronJobsTests(TestCase):
+    """run_daily_cron_jobs wrapper: all four jobs run independently, and any one failing doesn't
+    skip the others -- the actual mitigation for the shared-Railway-service tradeoff, not just
+    claimed in the docstring."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def test_all_four_jobs_run_successfully_in_normal_conditions(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        License.objects.filter(pk=lic.pk).update(
+            created_at=timezone.now() - timedelta(days=21)
+        )
+        lic2 = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+
+        out = StringIO()
+        call_command("run_daily_cron_jobs", stdout=out)
+
+        m.refresh_from_db()
+        lic2.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())
+        self.assertEqual(lic2.license_points, 4)
+        self.assertIn("All jobs completed successfully", out.getvalue())
+
+    def test_failure_in_decrement_license_points_does_not_skip_the_other_three(self):
+        from django.core.management.base import CommandError
+        from unittest.mock import patch
+
         m = Machine.objects.create(owner=self.acc1, days_remaining=5)
         lic = License.objects.create(account=None, generated_by=self.acc1)
         License.objects.filter(pk=lic.pk).update(
             created_at=timezone.now() - timedelta(days=21)
         )
 
-        out = StringIO()
-        call_command("run_daily_cron_jobs", stdout=out)
+        def fake_call_command(name, *args, **kwargs):
+            if name == "decrement_license_points":
+                raise RuntimeError("simulated crash")
+            from django.core.management import call_command as real_call_command
+            return real_call_command(name, *args, **kwargs)
 
+        with patch(
+            "machines.management.commands.run_daily_cron_jobs.call_command",
+            side_effect=fake_call_command,
+        ):
+            with self.assertRaises(CommandError):
+                call_command("run_daily_cron_jobs")
+
+        # The other three jobs still completed despite decrement_license_points crashing.
         m.refresh_from_db()
         self.assertEqual(m.days_remaining, 4)
         self.assertFalse(License.objects.filter(pk=lic.pk).exists())
-        self.assertIn("All jobs completed successfully", out.getvalue())
 
     def test_failure_in_one_job_does_not_skip_the_other(self):
         """If cleanup_unclaimed_licenses raises, decrement_machine_days must still run."""
