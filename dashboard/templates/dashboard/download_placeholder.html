@@ -2,13 +2,60 @@
 {% block title %}Download Box Software — Barathrum{% endblock %}
 {% block content %}
 
-<div class="card" style="max-width: 420px; margin: 40px auto 0; text-align:center;">
-  <h1 style="font-size:1.2rem; margin-top:0;">Box software — coming soon</h1>
+<div class="card" style="max-width: 560px; margin: 40px auto 0; text-align:left;">
+  <h1 style="font-size:1.2rem; margin-top:0; text-align:center;">Set up your Barathrum box</h1>
+
+  <p class="text-muted">Two steps: flash the SD card, then run one install command on the box.</p>
+
+  <p><strong>1. Flash the SD card</strong></p>
   <p class="text-muted">
-    The Barathrum box agent isn't released yet. Once it's ready, you'll be able to download it
-    here and use a generated license key to activate your machine.
+    Download a stock Armbian image for the Orange Pi One from
+    <a href="https://www.armbian.com/orange-pi-one/">armbian.com/orange-pi-one</a>, then flash it
+    to your SD card using <a href="https://etcher.balena.io/">Balena Etcher</a>. Both are official,
+    external sites — Barathrum doesn't host these files.
   </p>
+
+  <p><strong>2. Boot the box and run the install command</strong></p>
+  <p class="text-muted">
+    Boot the Orange Pi One from the flashed SD card, SSH into it, then download, verify, and run
+    the install script — do not pipe it straight into <code>sudo bash</code> without verifying it
+    first:
+  </p>
+
+  <div class="license-key-box" style="font-size:0.85rem;">
+    <span id="license-key-text" style="word-break: break-all; overflow-wrap: anywhere; white-space: pre-line;">curl -fsSLO https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh
+curl -fsSLO https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh.sha256
+sha256sum -c install.sh.sha256 && sudo bash install.sh</span>
+    <button type="button" class="btn btn-sm btn-secondary" id="copy-key-btn" onclick="copyLicenseKey()">Copy</button>
+  </div>
+  <p class="field-hint">
+    The middle line downloads a published checksum for the script above; <code>sha256sum -c</code>
+    verifies the downloaded <code>install.sh</code> matches it before <code>&amp;&amp;</code> lets
+    it run — if the check fails, nothing executes.
+  </p>
+
   <a href="{% url 'dashboard:home' %}" class="btn btn-block mt-16">Back to Barathrum</a>
 </div>
 
+<script>
+function copyLicenseKey() {
+  var text = document.getElementById('license-key-text').textContent;
+  var btn = document.getElementById('copy-key-btn');
+  function markCopied() {
+    btn.textContent = 'Copied!';
+    setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(markCopied);
+  } else {
+    var tmp = document.createElement('textarea');
+    tmp.value = text;
+    document.body.appendChild(tmp);
+    tmp.select();
+    document.execCommand('copy');
+    document.body.removeChild(tmp);
+    markCopied();
+  }
+}
+</script>
 {% endblock %}

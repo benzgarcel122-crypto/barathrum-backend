@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError
+from django.db import models
 from django.db import transaction as db_transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -560,6 +561,79 @@ def topup_view(request, machine_id):
         f"(₱{price_points} from your wallet).",
     )
     return redirect("dashboard:home")
+ 
+ 
+@login_required
+@require_http_methods(["GET", "POST"])
+def send_license_points_view(request, machine_id):
+    """
+    End Goals #17: send points from the operator's own wallet (Account.balance_points) into
+    this machine's bound License.license_points, unlocking unlimited concurrent access once
+    the license has any positive balance (End Goals #14). Same minimum floor as every other
+    wallet-spending action in this app (MINIMUM_TOPUP_POINTS), same atomic pattern as topup_view.
+
+    Deliberately a separate view/URL/template from topup_view, not a third tab bolted onto it --
+    topup_view funds Machine.days_remaining (day-to-day operation) and this funds a completely
+    different balance (License.license_points, concurrent-access unlock) serving a different
+    purpose. Keeping them separate means zero risk of regressing topup_view's already-tested
+    behavior.
+    """
+    machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
+    try:
+        license_obj = License.objects.get(license_key=machine.license_key)
+    except License.DoesNotExist:
+        # Should not happen in practice (every Machine's license_key traces back to a real
+        # License row per generate_license_view/add_machine_view's own construction) -- guarded
+        # defensively rather than assumed, same posture add_machine_view already takes.
+        messages.error(request, "Could not find the license record for this machine.")
+        return redirect("dashboard:machine_detail", machine_id=machine.id)
+
+    if request.method == "GET":
+        return render(
+            request,
+            "dashboard/send_license_points.html",
+            {
+                "active_nav": "dashboard",
+                "machine": machine,
+                "license_points": license_obj.license_points,
+                "balance_points": request.user.balance_points,
+            },
+        )
+
+    try:
+        amount = int(request.POST.get("amount", "0"))
+    except ValueError:
+        amount = 0
+    if amount < MINIMUM_TOPUP_POINTS:
+        messages.error(request, f"Minimum license points insertion is {MINIMUM_TOPUP_POINTS} points.")
+        return redirect("dashboard:send_license_points", machine_id=machine.id)
+
+    if request.user.balance_points < amount:
+        messages.error(
+            request,
+            f"Not enough wallet balance (need ₱{amount}, you have ₱{request.user.balance_points}). "
+            f"Top up your wallet first.",
+        )
+        return redirect("dashboard:send_license_points", machine_id=machine.id)
+
+    with db_transaction.atomic():
+        account = Account.objects.select_for_update().get(pk=request.user.pk)
+        if account.balance_points < amount:
+            messages.error(request, "Not enough wallet balance for this insertion.")
+            return redirect("dashboard:send_license_points", machine_id=machine.id)
+        account.balance_points -= amount
+        account.save(update_fields=["balance_points"])
+
+        License.objects.filter(pk=license_obj.pk).update(
+            license_points=models.F("license_points") + amount
+        )
+
+    messages.success(
+        request,
+        f"Sent {amount} points to {machine.nickname or machine.license_key}'s license "
+        f"(₱{amount} from your wallet).",
+    )
+    return redirect("dashboard:machine_detail", machine_id=machine.id)
  
  
 @login_required

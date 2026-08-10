@@ -1,0 +1,33 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Send License Points — Barathrum{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Send license points — {{ machine.nickname|default:machine.license_key }}</h1>
+</div>
+
+<div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+  <span class="text-muted">Wallet balance: <strong style="color: var(--color-text);">₱{{ balance_points }}</strong></span>
+  <a href="{% url 'dashboard:wallet_topup' %}" class="btn btn-sm btn-secondary">+ Top Up Wallet</a>
+</div>
+
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">
+    Current license points: <strong style="color: var(--color-text);">{{ license_points }}</strong>
+  </p>
+  <p class="field-hint">
+    Points sent here unlock unlimited concurrent customer connections on this box. With zero
+    license points, the box caps at 2 users connected at once.
+  </p>
+  <form method="post" action="{% url 'dashboard:send_license_points' machine.id %}">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_amount">Points to send</label>
+      <input type="number" id="id_amount" name="amount" min="10" step="1">
+      <div class="field-hint">Minimum 10 points, 1:1 from your wallet balance.</div>
+    </div>
+    <button type="submit" class="btn btn-block">Send Points</button>
+  </form>
+</div>
+
+{% endblock %}

@@ -701,3 +701,52 @@ class MinimumTopupPointsTests(TestCase):
         self.assertRedirects(bulk_resp, "/")
         machine2.refresh_from_db()
         self.assertEqual(machine2.days_remaining, 35)
+
+
+class DownloadPlaceholderPageTests(TestCase):
+    """Session 88: download_placeholder_view itself was already correct (public,
+    correctly wired) -- this covers the template replacement, confirming the page
+    renders for a logged-out visitor and contains the real install command rather
+    than the old "coming soon" stub."""
+
+    def test_download_page_loads_for_logged_out_visitor(self):
+        resp = self.client.get("/download/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTemplateUsed(resp, "dashboard/download_placeholder.html")
+
+    def test_download_page_contains_install_command(self):
+        resp = self.client.get("/download/")
+        self.assertContains(
+            resp,
+            "https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh",
+        )
+        self.assertContains(resp, "sudo bash")
+
+    def test_download_page_no_longer_says_coming_soon(self):
+        resp = self.client.get("/download/")
+        self.assertNotContains(resp, "coming soon")
+
+    def test_download_page_contains_checksum_verification_commands(self):
+        """Session 90 (Security Findings #14, tracker row 27): the download page must
+        instruct operators to verify install.sh's published checksum before running it,
+        not pipe it unverified straight into sudo bash."""
+        resp = self.client.get("/download/")
+        self.assertContains(
+            resp,
+            "https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh",
+        )
+        self.assertContains(
+            resp,
+            "https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh.sha256",
+        )
+        self.assertContains(resp, "sha256sum -c install.sh.sha256 && sudo bash install.sh")
+
+    def test_download_page_no_longer_has_unverified_pipe_to_sudo_bash(self):
+        """Session 90: the old one-liner that piped install.sh straight into sudo bash
+        with no verification step in between must be gone."""
+        resp = self.client.get("/download/")
+        self.assertNotContains(
+            resp,
+            "curl -fsSL https://github.com/benzgarcel122-crypto/barathrum-box-agent/releases/latest/download/install.sh | sudo bash",
+            html=False,
+        )

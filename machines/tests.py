@@ -162,28 +162,164 @@ class DecrementMachineDaysTests(TestCase):
         self.assertEqual(m3.days_remaining, 0)
 
 
-class RunDailyCronJobsTests(TestCase):
-    """run_daily_cron_jobs wrapper: both jobs run independently, and one failing doesn't skip
-    the other -- the actual mitigation for the shared-Railway-service tradeoff, not just claimed
-    in the docstring."""
+class DecrementLicensePointsTests(TestCase):
+    """
+    decrement_license_points management command -- End Goals #24, mirroring
+    DecrementMachineDaysTests' own test cases exactly (same pattern applied to License.license_points
+    instead of Machine.days_remaining).
+    """
 
     def setUp(self):
         self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
 
-    def test_both_jobs_run_successfully_in_normal_conditions(self):
+    def test_license_with_points_is_decremented_by_one(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+    def test_license_at_zero_stays_at_zero(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=0)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 0)
+
+    def test_double_fire_same_day_does_not_double_decrement(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+        out = StringIO()
+        call_command("decrement_license_points", stdout=out)
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+        self.assertIn("Already ran today", out.getvalue())
+
+    def test_new_ph_calendar_day_decrements_again(self):
+        from machines.models import CronJobRun
+
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+        run_record = CronJobRun.objects.get(job_name="decrement_license_points")
+        run_record.last_run_date -= timedelta(days=1)
+        run_record.save(update_fields=["last_run_date"])
+
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 8)
+
+    def test_never_references_days_remaining_or_balance_points_in_command_code(self):
+        """Direct code check: confirm this command's handle() logic never reads/writes
+        Machine.days_remaining or Account.balance_points -- it only ever touches
+        License.license_points."""
+        import inspect
+
+        from machines.management.commands.decrement_license_points import Command
+
+        source = inspect.getsource(Command.handle)
+        self.assertNotIn("days_remaining", source)
+        self.assertNotIn("balance_points", source)
+
+    def test_multiple_licenses_and_mixed_zero_balances_all_handled_correctly(self):
+        lic1 = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+        lic2 = License.objects.create(
+            account=None,
+            generated_by=Account.objects.create_user(phone_number="09179876543"),
+            license_points=0,
+        )
+        lic3 = License.objects.create(
+            account=None,
+            generated_by=Account.objects.create_user(phone_number="09171112222"),
+            license_points=1,
+        )
+        call_command("decrement_license_points", stdout=StringIO())
+        lic1.refresh_from_db()
+        lic2.refresh_from_db()
+        lic3.refresh_from_db()
+        self.assertEqual(lic1.license_points, 4)
+        self.assertEqual(lic2.license_points, 0)
+        self.assertEqual(lic3.license_points, 0)
+
+    def test_decrement_license_points_guard_is_independent_of_decrement_machine_days_guard(self):
+        """The two jobs' CronJobRun rows must never collide or share a last-run-date -- confirms
+        they're keyed by distinct job_name values."""
+        from machines.models import CronJobRun
+
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+
+        call_command("decrement_machine_days", stdout=StringIO())
+        # decrement_license_points hasn't run yet -- must still be able to run today, unaffected
+        # by decrement_machine_days already having run today under its own job_name.
+        call_command("decrement_license_points", stdout=StringIO())
+
+        m.refresh_from_db()
+        lic.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
+        self.assertEqual(lic.license_points, 4)
+        self.assertEqual(
+            set(CronJobRun.objects.values_list("job_name", flat=True)),
+            {"decrement_machine_days", "decrement_license_points"},
+        )
+
+
+class RunDailyCronJobsTests(TestCase):
+    """run_daily_cron_jobs wrapper: all four jobs run independently, and any one failing doesn't
+    skip the others -- the actual mitigation for the shared-Railway-service tradeoff, not just
+    claimed in the docstring."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def test_all_four_jobs_run_successfully_in_normal_conditions(self):
+        m = Machine.objects.create(owner=self.acc1, days_remaining=5)
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        License.objects.filter(pk=lic.pk).update(
+            created_at=timezone.now() - timedelta(days=21)
+        )
+        lic2 = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+
+        out = StringIO()
+        call_command("run_daily_cron_jobs", stdout=out)
+
+        m.refresh_from_db()
+        lic2.refresh_from_db()
+        self.assertEqual(m.days_remaining, 4)
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())
+        self.assertEqual(lic2.license_points, 4)
+        self.assertIn("All jobs completed successfully", out.getvalue())
+
+    def test_failure_in_decrement_license_points_does_not_skip_the_other_three(self):
+        from django.core.management.base import CommandError
+        from unittest.mock import patch
+
         m = Machine.objects.create(owner=self.acc1, days_remaining=5)
         lic = License.objects.create(account=None, generated_by=self.acc1)
         License.objects.filter(pk=lic.pk).update(
             created_at=timezone.now() - timedelta(days=21)
         )
 
-        out = StringIO()
-        call_command("run_daily_cron_jobs", stdout=out)
+        def fake_call_command(name, *args, **kwargs):
+            if name == "decrement_license_points":
+                raise RuntimeError("simulated crash")
+            from django.core.management import call_command as real_call_command
+            return real_call_command(name, *args, **kwargs)
 
+        with patch(
+            "machines.management.commands.run_daily_cron_jobs.call_command",
+            side_effect=fake_call_command,
+        ):
+            with self.assertRaises(CommandError):
+                call_command("run_daily_cron_jobs")
+
+        # The other three jobs still completed despite decrement_license_points crashing.
         m.refresh_from_db()
         self.assertEqual(m.days_remaining, 4)
         self.assertFalse(License.objects.filter(pk=lic.pk).exists())
-        self.assertIn("All jobs completed successfully", out.getvalue())
 
     def test_failure_in_one_job_does_not_skip_the_other(self):
         """If cleanup_unclaimed_licenses raises, decrement_machine_days must still run."""
@@ -633,6 +769,184 @@ class ValidateLicenseViewTests(TestCase):
             self.url, data=json.dumps({"license_key": lic.license_key}), content_type="application/json"
         )
 
+        self.assertEqual(response.status_code, 200)
+
+    def test_license_points_defaults_to_zero_on_a_freshly_created_license(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1)
+        self.assertEqual(lic.license_points, 0)
+
+    def test_success_response_includes_license_points_matching_db_nonzero_case(self):
+        """End Goals #14/#17: not just testing the coincidental default-0 case -- set a real
+        nonzero value directly and confirm the response actually reflects it."""
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=42)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = self._post(lic.license_key)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["license_points"], 42)
+
+
+class LicensePointsViewTests(TestCase):
+    """POST /api/box/license-points/ -- End Goals #17 box-side periodic poll target."""
+
+    url = "/api/box/license-points/"
+
+    def setUp(self):
+        cache.clear()
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _post(self, license_key):
+        return self.client.post(
+            self.url, data=json.dumps({"license_key": license_key}), content_type="application/json"
+        )
+
+    def test_reverse_resolves_to_the_documented_path(self):
+        self.assertEqual(reverse("machines:license_points"), self.url)
+
+    def test_valid_key_returns_200_with_license_points_matching_db(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=17)
+
+        response = self._post(lic.license_key)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["valid"])
+        self.assertEqual(data["license_points"], 17)
+
+    def test_nonexistent_license_key_returns_404(self):
+        response = self._post("ZZZZZZZZZZZZZZZ")
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(response.json()["valid"])
+
+    def test_empty_license_key_returns_400(self):
+        response = self._post("")
+        self.assertEqual(response.status_code, 400)
+
+    def test_malformed_json_body_returns_400(self):
+        response = self.client.post(self.url, data="not json", content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_get_method_rejected(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 405)
+
+    def test_endpoint_is_read_only_never_modifies_license_points(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=5)
+        self._post(lic.license_key)
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 5)
+
+    def test_rate_limit_triggers_after_threshold_exceeded(self):
+        from machines.views import RATE_LIMIT_MAX_ATTEMPTS
+
+        responses = [self._post("NONEXISTENTKEYXX") for _ in range(RATE_LIMIT_MAX_ATTEMPTS)]
+        for response in responses:
+            self.assertNotEqual(response.status_code, 429)
+
+        limited_response = self._post("NONEXISTENTKEYXX")
+        self.assertEqual(limited_response.status_code, 429)
+
+    def test_rate_limit_counter_is_separate_from_validate_license_views(self):
+        """
+        End Goals #17 design requirement: this endpoint's rate-limit counter must be
+        independently namespaced from validate_license_view's -- hammering one endpoint's limit
+        must not affect the other's remaining budget for the same client IP.
+        """
+        from machines.views import RATE_LIMIT_MAX_ATTEMPTS
+
+        validate_url = "/api/box/validate-license/"
+        for _ in range(RATE_LIMIT_MAX_ATTEMPTS):
+            self.client.post(
+                validate_url,
+                data=json.dumps({"license_key": "NONEXISTENTKEYXX"}),
+                content_type="application/json",
+            )
+        exhausted_validate_response = self.client.post(
+            validate_url,
+            data=json.dumps({"license_key": "NONEXISTENTKEYXX"}),
+            content_type="application/json",
+        )
+        self.assertEqual(exhausted_validate_response.status_code, 429)
+
+        # This endpoint's own counter must still be fresh -- unaffected by validate-license's
+        # exhausted budget for the same IP.
+        fresh_response = self._post("NONEXISTENTKEYXX")
+        self.assertNotEqual(fresh_response.status_code, 429)
+
+
+class SendLicensePointsViewTests(TestCase):
+    """
+    dashboard:send_license_points -- End Goals #17, sending points from an operator's wallet
+    into their machine's bound License.license_points. Deliberately a separate view from
+    topup_view (see TopupClearsZeroBalanceCountdownTests for topup_view's own coverage, left
+    completely untouched by this task).
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=100
+        )
+        self.acc2 = Account.objects.create_user(phone_number="09179876543", display_name="Op Two")
+        self.lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        self.machine = Machine.objects.create(owner=self.acc1, license_key=self.lic.license_key)
+        self.client.force_login(self.acc1)
+        self.url = reverse("dashboard:send_license_points", args=[self.machine.id])
+
+    def test_get_renders_form_with_current_license_points_and_wallet_balance(self):
+        self.lic.license_points = 30
+        self.lic.save(update_fields=["license_points"])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["license_points"], 30)
+        self.assertEqual(response.context["balance_points"], 100)
+
+    def test_post_below_minimum_is_rejected_no_db_change(self):
+        response = self.client.post(self.url, {"amount": "5"})
+
+        self.assertEqual(response.status_code, 302)
+        self.acc1.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 100)
+        self.assertEqual(self.lic.license_points, 0)
+
+    def test_post_with_insufficient_wallet_balance_is_rejected_no_db_change(self):
+        response = self.client.post(self.url, {"amount": "500"})
+
+        self.assertEqual(response.status_code, 302)
+        self.acc1.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 100)
+        self.assertEqual(self.lic.license_points, 0)
+
+    def test_valid_post_debits_wallet_and_increments_license_points_from_nonzero_start(self):
+        """Tests the F()-based increment against an already-nonzero starting value, not just
+        0 -> amount, to genuinely exercise the increment rather than a coincidental overwrite."""
+        self.lic.license_points = 20
+        self.lic.save(update_fields=["license_points"])
+
+        response = self.client.post(self.url, {"amount": "30"})
+
+        self.assertEqual(response.status_code, 302)
+        self.acc1.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 70)
+        self.assertEqual(self.lic.license_points, 50)
+
+    def test_ownership_scoped_like_topup_view_other_accounts_machine_returns_404(self):
+        other_machine = Machine.objects.create(owner=self.acc2, license_key="ZZZZZZZZZZZZZZZ")
+        other_url = reverse("dashboard:send_license_points", args=[other_machine.id])
+
+        response = self.client.get(other_url)
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_topup_view_completely_unaffected(self):
+        """Sanity check that this new view shares no state/side-effects with topup_view."""
+        topup_url = reverse("dashboard:topup", args=[self.machine.id])
+        response = self.client.get(topup_url)
         self.assertEqual(response.status_code, 200)
 
 
