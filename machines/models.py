@@ -236,6 +236,18 @@ class License(models.Model):
 
     RELEASE_MAX_FAILED_ATTEMPTS = 5
 
+    # End Goals #14/#17: points inserted specifically into this license (separate from
+    # Account.balance_points, the general wallet, and Machine.days_remaining, which funds basic
+    # day-to-day operation). Zero means the box enforces the 2-user concurrent cap; any positive
+    # value unlocks unlimited concurrent access.
+    license_points = models.PositiveIntegerField(
+        default=0,
+        help_text="End Goals #14/#17: points inserted specifically into this license (separate "
+                   "from Account.balance_points, the general wallet, and Machine.days_remaining, "
+                   "which funds basic day-to-day operation). Zero means the box enforces the "
+                   "2-user concurrent cap; any positive value unlocks unlimited concurrent access.",
+    )
+
     def save(self, *args, **kwargs):
         if not self.license_key:
             self.license_key = generate_unique_license_key([License, Machine])
