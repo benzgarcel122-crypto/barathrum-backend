@@ -4,6 +4,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
 from django.core.cache import cache
 from django.core.management import call_command
 from django.db import IntegrityError
@@ -60,6 +61,23 @@ class CleanupUnclaimedLicensesTests(TestCase):
         lic = License.objects.create(account=None, generated_by=self.acc1)
         call_command("cleanup_unclaimed_licenses", stdout=StringIO())
         self.assertTrue(License.objects.filter(pk=lic.pk).exists())
+
+    def test_unclaimed_license_with_positive_points_is_not_deleted(self):
+        """End Goal #19: the new precondition -- an unclaimed, 20+ day old license that still
+        holds a positive license_points balance is spared, since those points represent real
+        money already spent that deletion would destroy with no recovery path."""
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=5)
+        self._backdate(lic, 25)
+        call_command("cleanup_unclaimed_licenses", stdout=StringIO())
+        self.assertTrue(License.objects.filter(pk=lic.pk).exists())
+
+    def test_unclaimed_license_with_zero_points_still_deleted_as_before(self):
+        """Confirms the new precondition doesn't accidentally spare the normal zero-points
+        case -- unchanged behavior from before this task."""
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=0)
+        self._backdate(lic, 25)
+        call_command("cleanup_unclaimed_licenses", stdout=StringIO())
+        self.assertFalse(License.objects.filter(pk=lic.pk).exists())
 
 
 class CalendarDaysSinceTests(TestCase):
@@ -875,6 +893,149 @@ class LicensePointsViewTests(TestCase):
         self.assertNotEqual(fresh_response.status_code, 429)
 
 
+class UnbindLicenseViewTests(TestCase):
+    """
+    POST /api/box/unbind-license/ -- End Goals #20, box-side deactivation gated by the license's
+    recovery password. Reuses release_failed_attempts/release_locked_until -- same lockout
+    semantics dashboard's old release_license_view used to enforce, just a different caller.
+    """
+
+    url = "/api/box/unbind-license/"
+
+    def setUp(self):
+        cache.clear()
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _post(self, license_key, password):
+        return self.client.post(
+            self.url,
+            data=json.dumps({"license_key": license_key, "password": password}),
+            content_type="application/json",
+        )
+
+    def test_reverse_resolves_to_the_documented_path(self):
+        self.assertEqual(reverse("machines:unbind_license"), self.url)
+
+    def test_correct_password_clears_activated_at_and_resets_lockout_fields(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+            release_failed_attempts=2,
+        )
+
+        response = self._post(lic.license_key, "correctpw")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["valid"])
+        lic.refresh_from_db()
+        self.assertIsNone(lic.activated_at)
+        self.assertEqual(lic.release_failed_attempts, 0)
+        self.assertIsNone(lic.release_locked_until)
+
+    def test_wrong_password_returns_403_increments_counter_leaves_activated_at_untouched(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+        )
+        activated_before = lic.activated_at
+
+        response = self._post(lic.license_key, "wrongpw")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["valid"])
+        lic.refresh_from_db()
+        self.assertEqual(lic.activated_at, activated_before)
+        self.assertEqual(lic.release_failed_attempts, 1)
+
+    def test_fifth_wrong_attempt_locks_for_15_minutes(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+        )
+        for _ in range(5):
+            self._post(lic.license_key, "wrongpw")
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.release_failed_attempts, 0)  # reset when lockout triggers
+        self.assertIsNotNone(lic.release_locked_until)
+        self.assertGreater(lic.release_locked_until, timezone.now())
+
+    def test_locked_license_rejects_even_the_correct_password(self):
+        """Confirms the lockout check runs BEFORE the password check -- same pattern
+        box-agent's own admin_login lockout already uses."""
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            release_locked_until=timezone.now() + timedelta(minutes=10),
+        )
+
+        response = self._post(lic.license_key, "correctpw")
+
+        self.assertEqual(response.status_code, 423)
+        self.assertFalse(response.json()["valid"])
+        lic.refresh_from_db()
+        self.assertIsNone(lic.activated_at)
+
+    def test_nonexistent_license_key_returns_404(self):
+        response = self._post("ZZZZZZZZZZZZZZZ", "anypw")
+        self.assertEqual(response.status_code, 404)
+
+    def test_empty_license_key_returns_400(self):
+        response = self._post("", "anypw")
+        self.assertEqual(response.status_code, 400)
+
+    def test_malformed_json_body_returns_400(self):
+        response = self.client.post(self.url, data="not json", content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_does_not_touch_machine_account_or_license_points(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+            license_points=7,
+        )
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+        removed_before = machine.removed_at
+        balance_before = self.acc1.balance_points
+
+        self._post(lic.license_key, "correctpw")
+
+        lic.refresh_from_db()
+        machine.refresh_from_db()
+        self.acc1.refresh_from_db()
+        self.assertEqual(lic.license_points, 7)
+        self.assertEqual(machine.removed_at, removed_before)
+        self.assertEqual(self.acc1.balance_points, balance_before)
+
+    def test_rate_limit_counter_is_separate_from_other_box_endpoints(self):
+        from machines.views import RATE_LIMIT_MAX_ATTEMPTS
+
+        validate_url = "/api/box/validate-license/"
+        for _ in range(RATE_LIMIT_MAX_ATTEMPTS):
+            self.client.post(
+                validate_url,
+                data=json.dumps({"license_key": "NONEXISTENTKEYXX"}),
+                content_type="application/json",
+            )
+        exhausted_validate_response = self.client.post(
+            validate_url,
+            data=json.dumps({"license_key": "NONEXISTENTKEYXX"}),
+            content_type="application/json",
+        )
+        self.assertEqual(exhausted_validate_response.status_code, 429)
+
+        fresh_response = self._post("NONEXISTENTKEYXX", "anypw")
+        self.assertNotEqual(fresh_response.status_code, 429)
+
+
 class SendLicensePointsViewTests(TestCase):
     """
     dashboard:send_license_points -- End Goals #17, sending points from an operator's wallet
@@ -888,7 +1049,12 @@ class SendLicensePointsViewTests(TestCase):
             phone_number="09171234567", display_name="Op One", balance_points=100
         )
         self.acc2 = Account.objects.create_user(phone_number="09179876543", display_name="Op Two")
-        self.lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        # Activated by default -- these tests exercise the wallet/points mechanics, not the
+        # is_activated gate itself (see test_get_/test_post_rejected_when_license_not_activated
+        # below for that gate's own dedicated coverage).
+        self.lic = License.objects.create(
+            account=self.acc1, generated_by=self.acc1, activated_at=timezone.now()
+        )
         self.machine = Machine.objects.create(owner=self.acc1, license_key=self.lic.license_key)
         self.client.force_login(self.acc1)
         self.url = reverse("dashboard:send_license_points", args=[self.machine.id])
@@ -948,6 +1114,75 @@ class SendLicensePointsViewTests(TestCase):
         topup_url = reverse("dashboard:topup", args=[self.machine.id])
         response = self.client.get(topup_url)
         self.assertEqual(response.status_code, 200)
+
+    def test_topup_view_works_even_when_license_not_activated(self):
+        """End Goal #20 closing note: 'Top-up buttons grayed out when not activated' applies
+        ONLY to Send License Points, never to the days top-up -- topup_view/Machine.days_remaining
+        is a completely separate, box-independent balance. Confirms topup_view is never gated by
+        is_activated, unlike send_license_points_view."""
+        self.lic.activated_at = None
+        self.lic.save(update_fields=["activated_at"])
+        topup_url = reverse("dashboard:topup", args=[self.machine.id])
+        response = self.client.get(topup_url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_get_rejected_with_message_when_license_not_activated(self):
+        self.lic.activated_at = None
+        self.lic.save(update_fields=["activated_at"])
+
+        response = self.client.get(self.url, follow=True)
+
+        self.assertRedirects(response, reverse("dashboard:machine_detail", args=[self.machine.id]))
+        self.assertContains(response, "activated on any box yet")
+
+    def test_post_rejected_server_side_when_license_not_activated_no_db_change(self):
+        """End Goal #20 -- the actual enforcement, not just the template-level disabled link:
+        a direct POST bypassing the UI entirely (anyone who knows the URL) must still be
+        rejected, with zero wallet/points change."""
+        self.lic.activated_at = None
+        self.lic.save(update_fields=["activated_at"])
+
+        response = self.client.post(self.url, {"amount": "50"})
+
+        self.assertEqual(response.status_code, 302)
+        self.acc1.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 100)
+        self.assertEqual(self.lic.license_points, 0)
+
+
+class MachineDetailActivationBannerTests(TestCase):
+    """machine_detail_view/machine_detail.html -- End Goal #20's dashboard rendering of the
+    'claimed but not activated' status."""
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=100
+        )
+        self.client.force_login(self.acc1)
+
+    def test_not_activated_renders_banner_and_disabled_link(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1)  # activated_at=None
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = self.client.get(reverse("dashboard:machine_detail", args=[machine.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["is_activated"])
+        self.assertContains(response, "Not activated on any box")
+        self.assertContains(response, "pointer-events:none")
+
+    def test_activated_renders_normally_banner_absent(self):
+        lic = License.objects.create(
+            account=self.acc1, generated_by=self.acc1, activated_at=timezone.now()
+        )
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+
+        response = self.client.get(reverse("dashboard:machine_detail", args=[machine.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_activated"])
+        self.assertNotContains(response, "Not activated on any box")
 
 
 class AttachToNewMachineAdminActionTests(TestCase):
