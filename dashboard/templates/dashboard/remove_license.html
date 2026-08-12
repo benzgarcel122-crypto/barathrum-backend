@@ -1,0 +1,31 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Remove License — Barathrum{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Remove license</h1>
+</div>
+<div class="card" style="max-width: 420px;">
+  <p class="text-muted">
+    Are you sure you want to remove this license? {{ machine.nickname|default:machine.license_key }}
+    will disappear from your dashboard, but its balance and history are kept -- you can add it
+    back later using the same license key. This does not affect the physical box itself.
+  </p>
+  <table style="width:100%; margin-bottom:16px; font-size:0.9rem; border-collapse: collapse;">
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">Machine</td>
+      <td style="text-align:right;">{{ machine.nickname|default:"(no nickname)" }}</td>
+    </tr>
+    <tr>
+      <td class="text-muted" style="padding:6px 0;">License key</td>
+      <td style="text-align:right; font-family: monospace;">{{ machine.license_key }}</td>
+    </tr>
+  </table>
+  <form method="post" action="{% url 'dashboard:remove_license' machine.id %}">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-block">Yes, remove license</button>
+  </form>
+  <p class="text-muted mt-16" style="text-align:center;">
+    <a href="{% url 'dashboard:machine_detail' machine.id %}">Cancel</a>
+  </p>
+</div>
+{% endblock %}
