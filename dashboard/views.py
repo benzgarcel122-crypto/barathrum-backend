@@ -363,84 +363,36 @@ def add_machine_view(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
-def release_license_view(request, machine_id):
+def remove_license_view(request, machine_id):
     """
-    STEP 2.7 items 2-4 (Session 48 design): lets an operator release their own claimed machine
-    back to unclaimed status, gated by the license's recovery password (set at generation time
-    in generate_license_view). Solves the real-world case of an operator reflashing their own
-    box's SSD and needing to reuse the same license -- distinct from the older, rarer
-    multi-dashboard "Remove Machine" scenario (Session 32), which had no ownership-match
-    requirement on re-claim; this feature exists specifically because that generic release path
-    would let a stranger snatch the license mid-window.
+    Dashboard-side unclaim (End Goals closing note's "claimed" axis) -- replaces the old
+    password-gated release_license_view. The password-gated box-side deactivation this used to
+    also require now lives entirely on the box's own admin panel (End Goal #20,
+    machines/views.py::unbind_license_view) -- these are two independent actions, either order,
+    per this session's PM decision. No password here: this view is already scoped to
+    owner=request.user, so there's no "stranger" risk the old password gate was guarding against
+    at the dashboard layer.
 
     On success: Machine.removed_at is set (row kept, not deleted), so days_remaining and every
     Transaction row survive untouched until either a re-claim via add_machine_view (which
     reactivates this exact row) or the 20-day zero-balance cleanup job eventually sweeps it up.
+    Does NOT touch License at all -- no lookup, no field changes -- unlike the old view.
     """
     machine = get_object_or_404(
         Machine, id=machine_id, owner=request.user, removed_at__isnull=True
     )
 
-    try:
-        license_obj = License.objects.get(license_key=machine.license_key)
-    except License.DoesNotExist:
-        # Should not realistically happen given the FK-by-string design between Machine and
-        # License, but fail gracefully rather than a 500 if it ever does.
-        messages.error(request, "Something went wrong looking up this license. Try again later.")
-        return redirect("dashboard:machine_detail", machine_id=machine.id)
-
-    # Computed once and passed to every render below (GET, and both POST outcomes) so the
-    # template can show a live countdown and gray out the password field whenever a lockout is
-    # active -- not just immediately after the POST that triggered it. release_locked_until is
-    # passed as an ISO 8601 string (JS-friendly) rather than the raw Python datetime, whose
-    # default str() is what produced the unreadable "2026-07-28 02:32:30.226130+00:00" message
-    # this replaces.
-    def _lockout_context():
-        is_locked = bool(
-            license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until
-        )
-        return {
-            "active_nav": "dashboard",
-            "machine": machine,
-            "is_locked": is_locked,
-            "release_locked_until_iso": license_obj.release_locked_until.isoformat()
-            if is_locked
-            else None,
-        }
-
     if request.method == "GET":
-        return render(request, "dashboard/release_license.html", _lockout_context())
+        return render(request, "dashboard/remove_license.html", {"active_nav": "dashboard", "machine": machine})
 
-    if license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until:
-        messages.error(request, "Too many incorrect attempts. Try again in 15 minutes.")
-        return render(request, "dashboard/release_license.html", _lockout_context())
-
-    password = request.POST.get("password", "")
-
-    if check_password(password, license_obj.recovery_password_hash):
-        with db_transaction.atomic():
-            machine.removed_at = timezone.now()
-            machine.save(update_fields=["removed_at"])
-
-            license_obj.release_failed_attempts = 0
-            license_obj.release_locked_until = None
-            license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
-
-        messages.success(request, "License released. It can now be re-added on any box.")
-        return redirect("dashboard:home")
-
-    # Incorrect password: increment the failed-attempt counter, same throttle pattern as
-    # accounts.models.OTPCode. Never reveal the remaining-attempts count in the UI.
-    license_obj.release_failed_attempts += 1
-    if license_obj.release_failed_attempts >= License.RELEASE_MAX_FAILED_ATTEMPTS:
-        license_obj.release_locked_until = timezone.now() + timedelta(minutes=15)
-        # Reset the counter in the same save so the next window, after the cooldown expires,
-        # starts fresh rather than being immediately re-locked.
-        license_obj.release_failed_attempts = 0
-    license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
-
-    messages.error(request, "Incorrect recovery password.")
-    return render(request, "dashboard/release_license.html", _lockout_context())
+    machine.removed_at = timezone.now()
+    machine.save(update_fields=["removed_at"])
+    messages.success(
+        request,
+        f"{machine.nickname or machine.license_key} removed from your dashboard. Its balance and "
+        f"history are kept -- add it back later with the same license key.",
+    )
+    return redirect("dashboard:home")
 
 
 def download_placeholder_view(request):
@@ -456,6 +408,8 @@ def download_placeholder_view(request):
 def machine_detail_view(request, machine_id):
     machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
     transactions = machine.transactions.order_by("-created_at")[:20]
+    license_obj = License.objects.filter(license_key=machine.license_key).first()
+    is_activated = license_obj.is_activated if license_obj else False
     return render(
         request,
         "dashboard/machine_detail.html",
@@ -464,6 +418,7 @@ def machine_detail_view(request, machine_id):
             "machine": machine,
             "color": _status_color(machine.days_remaining),
             "transactions": transactions,
+            "is_activated": is_activated,
         },
     )
  
@@ -586,6 +541,13 @@ def send_license_points_view(request, machine_id):
         # License row per generate_license_view/add_machine_view's own construction) -- guarded
         # defensively rather than assumed, same posture add_machine_view already takes.
         messages.error(request, "Could not find the license record for this machine.")
+        return redirect("dashboard:machine_detail", machine_id=machine.id)
+
+    # End Goal #20: server-side guard -- the template-side disabled link (machine_detail.html)
+    # is cosmetic only and trivially bypassable by anyone who knows the URL, so this check must
+    # be enforced here regardless of how the request arrived.
+    if not license_obj.is_activated:
+        messages.error(request, "This license isn't activated on any box yet.")
         return redirect("dashboard:machine_detail", machine_id=machine.id)
 
     if request.method == "GET":
