@@ -14,6 +14,8 @@ from django.utils import timezone
 
 from machines.models import License, Machine
 
+from dashboard.views import BUNDLE_PRICING
+
 Account = get_user_model()
 
 
@@ -192,6 +194,16 @@ class DecrementLicensePointsTests(TestCase):
 
     def test_license_with_points_is_decremented_by_one(self):
         lic = License.objects.create(account=None, generated_by=self.acc1, license_points=10)
+        call_command("decrement_license_points", stdout=StringIO())
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 9)
+
+    def test_still_drains_an_unactivated_license(self):
+        """PM sign-off: points sent before a box is ever bound still lose value on the normal
+        daily schedule -- this command has NO activation check of its own, intentionally."""
+        lic = License.objects.create(
+            account=self.acc1, generated_by=self.acc1, activated_at=None, license_points=10
+        )
         call_command("decrement_license_points", stdout=StringIO())
         lic.refresh_from_db()
         self.assertEqual(lic.license_points, 9)
@@ -1036,119 +1048,272 @@ class UnbindLicenseViewTests(TestCase):
         self.assertNotEqual(fresh_response.status_code, 429)
 
 
-class SendLicensePointsViewTests(TestCase):
+class TopupMirrorsLicensePointsTests(TestCase):
     """
-    dashboard:send_license_points -- End Goals #17, sending points from an operator's wallet
-    into their machine's bound License.license_points. Deliberately a separate view from
-    topup_view (see TopupClearsZeroBalanceCountdownTests for topup_view's own coverage, left
-    completely untouched by this task).
+    dashboard:topup / dashboard:bulk_topup -- PM decision, session following End Goal #20's
+    build: the standalone "Send License Points" view/URL/template is deleted entirely. Every
+    top-up (bundle or custom, single or bulk) now credits License.license_points by the exact
+    same days_added amount it credits to Machine.days_remaining, same transaction, same single
+    wallet debit, no is_activated guard.
     """
 
     def setUp(self):
         self.acc1 = Account.objects.create_user(
-            phone_number="09171234567", display_name="Op One", balance_points=100
+            phone_number="09171234567", display_name="Op One", balance_points=1000
         )
-        self.acc2 = Account.objects.create_user(phone_number="09179876543", display_name="Op Two")
-        # Activated by default -- these tests exercise the wallet/points mechanics, not the
-        # is_activated gate itself (see test_get_/test_post_rejected_when_license_not_activated
-        # below for that gate's own dedicated coverage).
-        self.lic = License.objects.create(
-            account=self.acc1, generated_by=self.acc1, activated_at=timezone.now()
-        )
+        self.lic = License.objects.create(account=self.acc1, generated_by=self.acc1)
         self.machine = Machine.objects.create(owner=self.acc1, license_key=self.lic.license_key)
         self.client.force_login(self.acc1)
-        self.url = reverse("dashboard:send_license_points", args=[self.machine.id])
 
-    def test_get_renders_form_with_current_license_points_and_wallet_balance(self):
-        self.lic.license_points = 30
-        self.lic.save(update_fields=["license_points"])
+    # -- test case 1: bundle mode mirrors into license_points, from a nonzero start ------------
 
-        response = self.client.get(self.url)
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["license_points"], 30)
-        self.assertEqual(response.context["balance_points"], 100)
-
-    def test_post_below_minimum_is_rejected_no_db_change(self):
-        response = self.client.post(self.url, {"amount": "5"})
-
-        self.assertEqual(response.status_code, 302)
-        self.acc1.refresh_from_db()
-        self.lic.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 100)
-        self.assertEqual(self.lic.license_points, 0)
-
-    def test_post_with_insufficient_wallet_balance_is_rejected_no_db_change(self):
-        response = self.client.post(self.url, {"amount": "500"})
-
-        self.assertEqual(response.status_code, 302)
-        self.acc1.refresh_from_db()
-        self.lic.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 100)
-        self.assertEqual(self.lic.license_points, 0)
-
-    def test_valid_post_debits_wallet_and_increments_license_points_from_nonzero_start(self):
-        """Tests the F()-based increment against an already-nonzero starting value, not just
-        0 -> amount, to genuinely exercise the increment rather than a coincidental overwrite."""
+    def test_bundle_topup_mirrors_days_added_into_license_points_from_nonzero_start(self):
         self.lic.license_points = 20
         self.lic.save(update_fields=["license_points"])
+        wallet_before = self.acc1.balance_points
 
-        response = self.client.post(self.url, {"amount": "30"})
+        resp = self.client.post(
+            f"/machines/{self.machine.id}/topup/", {"mode": "bundle", "bundle_type": "30day"}
+        )
+        self.assertEqual(resp.status_code, 302)
 
-        self.assertEqual(response.status_code, 302)
-        self.acc1.refresh_from_db()
+        self.machine.refresh_from_db()
         self.lic.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 70)
-        self.assertEqual(self.lic.license_points, 50)
-
-    def test_ownership_scoped_like_topup_view_other_accounts_machine_returns_404(self):
-        other_machine = Machine.objects.create(owner=self.acc2, license_key="ZZZZZZZZZZZZZZZ")
-        other_url = reverse("dashboard:send_license_points", args=[other_machine.id])
-
-        response = self.client.get(other_url)
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_topup_view_completely_unaffected(self):
-        """Sanity check that this new view shares no state/side-effects with topup_view."""
-        topup_url = reverse("dashboard:topup", args=[self.machine.id])
-        response = self.client.get(topup_url)
-        self.assertEqual(response.status_code, 200)
-
-    def test_topup_view_works_even_when_license_not_activated(self):
-        """End Goal #20 closing note: 'Top-up buttons grayed out when not activated' applies
-        ONLY to Send License Points, never to the days top-up -- topup_view/Machine.days_remaining
-        is a completely separate, box-independent balance. Confirms topup_view is never gated by
-        is_activated, unlike send_license_points_view."""
-        self.lic.activated_at = None
-        self.lic.save(update_fields=["activated_at"])
-        topup_url = reverse("dashboard:topup", args=[self.machine.id])
-        response = self.client.get(topup_url)
-        self.assertEqual(response.status_code, 200)
-
-    def test_get_rejected_with_message_when_license_not_activated(self):
-        self.lic.activated_at = None
-        self.lic.save(update_fields=["activated_at"])
-
-        response = self.client.get(self.url, follow=True)
-
-        self.assertRedirects(response, reverse("dashboard:machine_detail", args=[self.machine.id]))
-        self.assertContains(response, "activated on any box yet")
-
-    def test_post_rejected_server_side_when_license_not_activated_no_db_change(self):
-        """End Goal #20 -- the actual enforcement, not just the template-level disabled link:
-        a direct POST bypassing the UI entirely (anyone who knows the URL) must still be
-        rejected, with zero wallet/points change."""
-        self.lic.activated_at = None
-        self.lic.save(update_fields=["activated_at"])
-
-        response = self.client.post(self.url, {"amount": "50"})
-
-        self.assertEqual(response.status_code, 302)
         self.acc1.refresh_from_db()
+        self.assertEqual(self.machine.days_remaining, 30)
+        self.assertEqual(self.lic.license_points, 50)  # 20 + 30, genuinely an F() increment
+        # Single wallet debit -- not double-charged for funding two balances.
+        self.assertLess(self.acc1.balance_points, wallet_before)
+        expected_price = int(BUNDLE_PRICING["30day"]["price"])
+        self.assertEqual(self.acc1.balance_points, wallet_before - expected_price)
+
+    # -- test case 2: custom mode mirrors into license_points -----------------------------------
+
+    def test_custom_topup_mirrors_days_added_into_license_points(self):
+        resp = self.client.post(
+            f"/machines/{self.machine.id}/topup/",
+            {"mode": "custom", "custom_days": "15"},
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        self.machine.refresh_from_db()
         self.lic.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 100)
-        self.assertEqual(self.lic.license_points, 0)
+        self.assertEqual(self.machine.days_remaining, 15)
+        self.assertEqual(self.lic.license_points, 15)
+
+    # -- test case 3: missing License row never blocks the days credit --------------------------
+
+    def test_missing_license_row_still_credits_days_logs_warning_no_crash(self):
+        orphan_machine = Machine.objects.create(owner=self.acc1, license_key="NOMATCHINGKEY99")
+
+        with self.assertLogs("dashboard.views", level="WARNING") as cm:
+            resp = self.client.post(
+                f"/machines/{orphan_machine.id}/topup/", {"mode": "bundle", "bundle_type": "30day"}
+            )
+        self.assertEqual(resp.status_code, 302)
+
+        orphan_machine.refresh_from_db()
+        self.assertEqual(orphan_machine.days_remaining, 30)  # days credit never blocked
+        self.assertTrue(any("no License row found" in msg for msg in cm.output))
+
+    # -- test case 4: bulk topup mirrors per-machine, not shared/summed -------------------------
+
+    def test_bulk_topup_mirrors_each_machines_own_bundle_days_not_a_shared_total(self):
+        lic2 = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        m2 = Machine.objects.create(owner=self.acc1, license_key=lic2.license_key)
+        lic3 = License.objects.create(account=self.acc1, generated_by=self.acc1)
+        m3 = Machine.objects.create(owner=self.acc1, license_key=lic3.license_key)
+
+        resp = self.client.post(
+            "/machines/bulk-topup/",
+            {
+                "machine_id": [self.machine.id, m2.id, m3.id],
+                f"bundle_{self.machine.id}": "30day",
+                f"bundle_{m2.id}": "60day",
+                f"bundle_{m3.id}": "30day",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        self.lic.refresh_from_db()
+        lic2.refresh_from_db()
+        lic3.refresh_from_db()
+        self.assertEqual(self.lic.license_points, 30)
+        self.assertEqual(lic2.license_points, 60)
+        self.assertEqual(lic3.license_points, 30)
+
+    # -- test case 5: bulk topup, one machine missing a License row, others still credited ------
+
+    def test_bulk_topup_missing_license_on_one_machine_does_not_block_others(self):
+        orphan_machine = Machine.objects.create(owner=self.acc1, license_key="NOMATCHINGKEY88")
+
+        with self.assertLogs("dashboard.views", level="WARNING"):
+            resp = self.client.post(
+                "/machines/bulk-topup/",
+                {
+                    "machine_id": [self.machine.id, orphan_machine.id],
+                    f"bundle_{self.machine.id}": "30day",
+                    f"bundle_{orphan_machine.id}": "30day",
+                },
+            )
+        self.assertEqual(resp.status_code, 302)
+
+        self.machine.refresh_from_db()
+        orphan_machine.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.machine.days_remaining, 30)
+        self.assertEqual(self.lic.license_points, 30)
+        self.assertEqual(orphan_machine.days_remaining, 30)  # days credit unaffected
+
+    # -- test case 6: the deleted URL is genuinely gone ------------------------------------------
+
+    def test_send_license_points_url_no_longer_exists(self):
+        from django.urls import NoReverseMatch
+
+        with self.assertRaises(NoReverseMatch):
+            reverse("dashboard:send_license_points", args=[self.machine.id])
+
+    # -- test case 9: rejected top-ups touch neither balance -------------------------------------
+
+    def test_below_minimum_custom_topup_touches_neither_balance(self):
+        days_before = self.machine.days_remaining
+        points_before = self.lic.license_points
+        wallet_before = self.acc1.balance_points
+
+        resp = self.client.post(
+            f"/machines/{self.machine.id}/topup/", {"mode": "custom", "custom_days": "1"}
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        self.machine.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.acc1.refresh_from_db()
+        self.assertEqual(self.machine.days_remaining, days_before)
+        self.assertEqual(self.lic.license_points, points_before)
+        self.assertEqual(self.acc1.balance_points, wallet_before)
+
+    def test_insufficient_wallet_balance_touches_neither_balance(self):
+        poor_acc = Account.objects.create_user(phone_number="09179876543", balance_points=1)
+        lic2 = License.objects.create(account=poor_acc, generated_by=poor_acc)
+        m2 = Machine.objects.create(owner=poor_acc, license_key=lic2.license_key)
+        self.client.force_login(poor_acc)
+
+        resp = self.client.post(
+            f"/machines/{m2.id}/topup/", {"mode": "bundle", "bundle_type": "30day"}
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        m2.refresh_from_db()
+        lic2.refresh_from_db()
+        poor_acc.refresh_from_db()
+        self.assertEqual(m2.days_remaining, 0)
+        self.assertEqual(lic2.license_points, 0)
+        self.assertEqual(poor_acc.balance_points, 1)
+
+    # -- topup_view remains fully box-independent, unchanged in that respect --------------------
+
+    def test_topup_works_regardless_of_activation_status(self):
+        self.assertFalse(self.lic.is_activated)
+        resp = self.client.post(
+            f"/machines/{self.machine.id}/topup/", {"mode": "bundle", "bundle_type": "30day"}
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.machine.refresh_from_db()
+        self.lic.refresh_from_db()
+        self.assertEqual(self.machine.days_remaining, 30)
+        self.assertEqual(self.lic.license_points, 30)
+
+
+class BackfillLicensePointsMigrationTests(TestCase):
+    """
+    machines/migrations/0012_backfill_license_points_from_days_remaining.py -- one-time,
+    PM-requested data migration aligning every existing claimed License's license_points to
+    match its Machine's days_remaining, once, at deploy time. Test cases 11-15.
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _run_backfill(self):
+        import importlib
+
+        module = importlib.import_module(
+            "machines.migrations.0012_backfill_license_points_from_days_remaining"
+        )
+        from django.apps import apps as real_apps
+
+        module.backfill_license_points(real_apps, None)
+
+    def test_mismatched_license_points_gets_force_corrected_to_match_days_remaining(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=7)
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key, days_remaining=42)
+
+        self._run_backfill()
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 42)  # before: 7, after: 42 -- force-corrected
+
+    def test_already_matching_license_points_left_correctly_unchanged(self):
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=10)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key, days_remaining=10)
+
+        self._run_backfill()
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 10)
+
+    def test_released_machine_still_gets_its_license_backfilled(self):
+        """Claim status is not a factor -- same standing principle this codebase already
+        applies elsewhere (e.g. cleanup_zero_balance_machines)."""
+        lic = License.objects.create(account=self.acc1, generated_by=self.acc1, license_points=0)
+        machine = Machine.objects.create(
+            owner=self.acc1, license_key=lic.license_key, days_remaining=99,
+            removed_at=timezone.now(),
+        )
+
+        self._run_backfill()
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 99)
+
+    def test_never_claimed_license_left_completely_untouched(self):
+        lic = License.objects.create(account=None, generated_by=self.acc1, license_points=3)
+        points_before = lic.license_points
+
+        self._run_backfill()
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, points_before)
+
+    def test_migration_is_genuinely_wired_and_reachable_via_migrate_command(self):
+        """
+        Confirms this is a real migration reachable via the normal migrate pathway -- not just
+        a standalone function that happens to exist. Uses Django's own MigrationLoader (which
+        `migrate` itself uses to discover migrations) rather than actually running `migrate`
+        backward+forward here -- SQLite's schema editor can't run schema-touching migrations
+        backward inside a TestCase's wrapping transaction (a SQLite/test-harness limitation, not
+        a real migration bug; this migration already applied forward cleanly as part of the
+        normal test-DB setup, visible in the test runner's own setup output).
+        """
+        from django.db import connection
+        from django.db.migrations.loader import MigrationLoader
+
+        loader = MigrationLoader(connection)
+        key = ("machines", "0012_backfill_license_points_from_days_remaining")
+        self.assertIn(key, loader.disk_migrations)
+
+        migration = loader.disk_migrations[key]
+        self.assertEqual(migration.dependencies, [("machines", "0011_license_license_points")])
+
+        import importlib
+
+        module = importlib.import_module(
+            "machines.migrations.0012_backfill_license_points_from_days_remaining"
+        )
+        # The migration's own RunPython operation must point to the exact same function this
+        # test file calls directly elsewhere -- proves it's genuinely wired into the real
+        # migration graph, not a lookalike standalone function.
+        self.assertIs(migration.operations[0].code, module.backfill_license_points)
 
 
 class MachineDetailActivationBannerTests(TestCase):
@@ -1161,7 +1326,10 @@ class MachineDetailActivationBannerTests(TestCase):
         )
         self.client.force_login(self.acc1)
 
-    def test_not_activated_renders_banner_and_disabled_link(self):
+    def test_not_activated_renders_banner_top_up_link_present_no_send_points_link(self):
+        """PM decision (this session): 'Send License Points' as a separate link is removed
+        entirely, folded into Top Up. The banner still shows for visibility, and Top Up remains
+        fully present/unguarded regardless of activation status."""
         lic = License.objects.create(account=self.acc1, generated_by=self.acc1)  # activated_at=None
         machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
 
@@ -1170,7 +1338,8 @@ class MachineDetailActivationBannerTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["is_activated"])
         self.assertContains(response, "Not activated on any box")
-        self.assertContains(response, "pointer-events:none")
+        self.assertNotContains(response, "Send License Points")
+        self.assertContains(response, reverse("dashboard:topup", args=[machine.id]))
 
     def test_activated_renders_normally_banner_absent(self):
         lic = License.objects.create(
