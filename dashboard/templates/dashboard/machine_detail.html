@@ -5,9 +5,23 @@
 <div class="page-header">
   <h1>{{ machine.nickname|default:machine.license_key }}</h1>
   <a href="{% url 'dashboard:topup' machine.id %}" class="btn btn-sm">Top Up</a>
-  <a href="{% url 'dashboard:send_license_points' machine.id %}" class="btn btn-sm btn-secondary">Send License Points</a>
-  <a href="{% url 'dashboard:release_license' machine.id %}" class="btn btn-sm btn-secondary">Release License</a>
+  {% if is_activated %}
+    <a href="{% url 'dashboard:send_license_points' machine.id %}" class="btn btn-sm btn-secondary">Send License Points</a>
+  {% else %}
+    <span class="btn btn-sm btn-secondary" style="opacity:0.5; pointer-events:none;" title="Not activated on any box">Send License Points</span>
+  {% endif %}
+  <a href="{% url 'dashboard:remove_license' machine.id %}" class="btn btn-sm btn-secondary">Remove License</a>
 </div>
+
+{% if not is_activated %}
+<div class="card" style="border: 1px solid var(--color-red, #c0392b); background: #fdf2f2;">
+  <strong style="color: var(--color-red, #c0392b);">Not activated on any box</strong>
+  <p class="text-muted" style="margin: 4px 0 0;">
+    This license isn't currently bound to a physical box (it may have been unbound, or never
+    activated yet). Sending license points is disabled until a box activates it again.
+  </p>
+</div>
+{% endif %}
 
 <div class="card">
   <div class="days-remaining days-{{ color }}">{{ machine.days_remaining }}</div>
