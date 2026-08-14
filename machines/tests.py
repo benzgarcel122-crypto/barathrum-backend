@@ -698,7 +698,14 @@ class ValidateLicenseViewTests(TestCase):
         lic.refresh_from_db()
         self.assertIsNotNone(lic.activated_at)
 
-    def test_activation_is_idempotent_second_call_does_not_change_timestamp(self):
+    def test_second_call_to_already_active_license_returns_409_and_does_not_change_timestamp(self):
+        """
+        BEHAVIOR CHANGE, End Goal #21: previously a second call for an already-activated key
+        silently returned 200 (the old accepted gap -- Session 65 open question #2). Now it
+        returns 409 with already_active: true, forcing the caller through the password-gated
+        Unbind -> Bind recovery flow instead of silently re-succeeding with zero proof of
+        ownership.
+        """
         lic = License.objects.create(account=None, generated_by=self.acc1)
 
         first_response = self._post(lic.license_key)
@@ -708,7 +715,9 @@ class ValidateLicenseViewTests(TestCase):
         self.assertIsNotNone(first_activated_at)
 
         second_response = self._post(lic.license_key)
-        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(second_response.json()["valid"], False)
+        self.assertEqual(second_response.json()["already_active"], True)
         lic.refresh_from_db()
         self.assertEqual(lic.activated_at, first_activated_at)
 
@@ -815,6 +824,110 @@ class ValidateLicenseViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["license_points"], 42)
+
+
+class LicenseReflashRecoveryTests(TestCase):
+    """
+    End Goal #21: validate-license and unbind-license working together as the enforced two-step
+    reflash-recovery flow. Closes the gap ValidateLicenseViewTests' old
+    test_activation_is_idempotent... test used to accept as a known limitation -- a caller who
+    only knows the license key (not the recovery password) can no longer "reactivate" an
+    already-active license. Recovery now requires Unbind (password-gated, End Goal #20, reused
+    unmodified here) followed by Bind again.
+    """
+
+    validate_url = "/api/box/validate-license/"
+    unbind_url = "/api/box/unbind-license/"
+
+    def setUp(self):
+        cache.clear()
+        self.acc1 = Account.objects.create_user(phone_number="09171234567", display_name="Op One")
+
+    def _validate(self, license_key):
+        return self.client.post(
+            self.validate_url,
+            data=json.dumps({"license_key": license_key}),
+            content_type="application/json",
+        )
+
+    def _unbind(self, license_key, password):
+        return self.client.post(
+            self.unbind_url,
+            data=json.dumps({"license_key": license_key, "password": password}),
+            content_type="application/json",
+        )
+
+    def test_already_active_license_returns_409_with_already_active_flag(self):
+        lic = License.objects.create(
+            account=self.acc1, generated_by=self.acc1, activated_at=timezone.now()
+        )
+        activated_before = lic.activated_at
+
+        response = self._validate(lic.license_key)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["valid"])
+        self.assertTrue(response.json()["already_active"])
+        lic.refresh_from_db()
+        self.assertEqual(lic.activated_at, activated_before)
+
+    def test_reactivation_after_proper_unbind_succeeds_as_fresh_activation(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+        )
+
+        unbind_response = self._unbind(lic.license_key, "correctpw")
+        self.assertEqual(unbind_response.status_code, 200)
+        lic.refresh_from_db()
+        self.assertIsNone(lic.activated_at)
+
+        validate_response = self._validate(lic.license_key)
+
+        self.assertEqual(validate_response.status_code, 200)
+        self.assertTrue(validate_response.json()["valid"])
+        self.assertNotIn("already_active", validate_response.json())
+        lic.refresh_from_db()
+        self.assertIsNotNone(lic.activated_at)
+
+    def test_license_points_survive_full_unbind_rebind_cycle(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+            license_points=75,
+        )
+
+        unbind_response = self._unbind(lic.license_key, "correctpw")
+        self.assertEqual(unbind_response.status_code, 200)
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 75)
+
+        validate_response = self._validate(lic.license_key)
+        self.assertEqual(validate_response.status_code, 200)
+        self.assertEqual(validate_response.json()["license_points"], 75)
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, 75)
+
+    def test_wrong_password_on_unbind_leaves_license_still_active_and_reactivation_still_blocked(self):
+        lic = License.objects.create(
+            account=self.acc1,
+            generated_by=self.acc1,
+            recovery_password_hash=make_password("correctpw"),
+            activated_at=timezone.now(),
+        )
+
+        unbind_response = self._unbind(lic.license_key, "wrongpw")
+        self.assertEqual(unbind_response.status_code, 403)
+        lic.refresh_from_db()
+        self.assertIsNotNone(lic.activated_at)
+
+        validate_response = self._validate(lic.license_key)
+        self.assertEqual(validate_response.status_code, 409)
+        self.assertTrue(validate_response.json()["already_active"])
 
 
 class LicensePointsViewTests(TestCase):
