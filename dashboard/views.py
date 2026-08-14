@@ -733,6 +733,11 @@ def send_points_view(request):
     operator, identified by phone number. New build (not a bug fix) -- previously the only ways
     Account.balance_points ever moved were the admin's one-directional Gift Points action
     (superuser-only, no balance check) and a Machine top-up spend (single-account debit only).
+
+    WARNING (End Goal #23, MPD): this view must never import, query, or modify
+    machines.models.License or its license_points field -- now or in any future extension of this
+    view. License points are excluded from peer-to-peer transfer by design; see
+    accounts/models.py::PointTransfer's own docstring for the full rule.
     """
     if request.method == "GET":
         transfers = sorted(
