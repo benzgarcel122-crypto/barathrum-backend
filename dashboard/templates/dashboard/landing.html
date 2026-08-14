@@ -4,50 +4,245 @@
 {% block main_class %}landing-main{% endblock %}
 {% block topbar_actions %}
 <div class="topbar-actions">
+  <a href="#how-it-works" class="landing-nav-link">Features</a>
+  <a href="#" class="landing-nav-link">Docs</a>
+  <a href="#" class="landing-nav-link">Pricing</a>
   <a href="{% url 'login' %}" class="btn btn-sm">Log In</a>
-  <a href="{% url 'signup' %}" class="btn btn-secondary btn-sm">Sign Up</a>
+  <a href="{% url 'signup' %}" class="btn btn-secondary btn-sm">Get Started</a>
 </div>
 {% endblock %}
 {% block content %}
 
+<style>
+  /* Scoped to .landing-page only -- does not touch base.css or any other page's look. */
+  .landing-page { background: #0B0F17; }
+  .landing-page .app-shell { background: #0B0F17; }
+  .landing-page .topbar {
+    background: rgba(11, 15, 23, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .landing-page .topbar .brand { color: #F3F4F6; }
+  .landing-page .topbar .brand-sub { color: #10B981; }
+
+  .landing-page .topbar-actions { gap: 22px; }
+  .landing-page .landing-nav-link {
+    color: #9CA3AF;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .landing-page .landing-nav-link:hover { color: #F3F4F6; }
+  @media (max-width: 860px) { .landing-page .landing-nav-link { display: none; } }
+
+  .landing-page .topbar-actions .btn {
+    color: #F3F4F6;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .landing-page .topbar-actions .btn:hover { background: rgba(255, 255, 255, 0.08); }
+  .landing-page .topbar-actions .btn-secondary {
+    background: linear-gradient(90deg, #10B981, #06B6D4);
+    color: #05130f;
+    border: none;
+    font-weight: 700;
+  }
+  .landing-page .landing-main { color: #F3F4F6; }
+
+  .landing-page .landing-hero { align-items: center; }
+  .landing-page .landing-hero h1 { color: #ffffff; }
+  .landing-page .landing-hero h1 .gradient-text {
+    background: linear-gradient(90deg, #34D399, #22D3EE);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .landing-page .landing-hero-sub { color: #9CA3AF; }
+
+  /* Primary CTA: solid gradient, matches the reference's "Generate a License Key" button */
+  .landing-page .landing-cta-row .btn-primary {
+    background: linear-gradient(90deg, #10B981, #06B6D4);
+    color: #05130f;
+    border: none;
+    font-weight: 700;
+    box-shadow: 0 10px 30px -10px rgba(16, 185, 129, 0.45);
+  }
+  .landing-page .landing-cta-row .btn-primary:hover {
+    box-shadow: 0 10px 40px -8px rgba(16, 185, 129, 0.6);
+  }
+  /* Secondary CTA: outlined, matches the reference's "Download Box Software" button */
+  .landing-page .landing-cta-row .btn-outline {
+    background: transparent;
+    color: #F3F4F6;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    font-weight: 600;
+  }
+  .landing-page .landing-cta-row .btn-outline:hover {
+    border-color: rgba(16, 185, 129, 0.5);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* Phone-style dashboard preview visual -- illustrative only, not live account data */
+  .landing-page .landing-hero-visual { display: flex; justify-content: center; }
+  .landing-page .phone-mockup {
+    width: 100%;
+    max-width: 380px;
+    background: rgba(17, 24, 39, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    padding: 20px;
+    box-shadow: 0 0 50px -12px rgba(16, 185, 129, 0.35);
+  }
+  .phone-mockup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .phone-mockup-header .dot { width: 8px; height: 8px; border-radius: 50%; background: #10B981; }
+  .phone-mockup-title { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; color: #E5E7EB; }
+  .phone-mockup-badge {
+    font-size: 0.65rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #9CA3AF;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    padding: 3px 8px;
+  }
+  .phone-mockup-stat {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .phone-mockup-stat-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: #9CA3AF; }
+  .phone-mockup-stat-value { font-size: 1.4rem; font-weight: 800; color: #ffffff; margin-top: 4px; }
+  .phone-mockup-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 70px;
+    background: linear-gradient(to top, rgba(16, 185, 129, 0.08), transparent);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+  .phone-mockup-bars span { flex: 1; background: rgba(16, 185, 129, 0.55); border-radius: 3px 3px 0 0; }
+  .phone-mockup-machines-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: #9CA3AF; margin-bottom: 8px; }
+  .phone-mockup-machine {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    color: #D1D5DB;
+  }
+  .phone-mockup-machine .status { color: #34D399; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+  .phone-mockup-machine .status .dot { width: 6px; height: 6px; border-radius: 50%; background: #34D399; }
+
+  /* How it works -- connected steps with icons and a highlighted first card */
+  .landing-page .landing-steps h2 { color: #ffffff; }
+  .landing-page .landing-steps-grid { position: relative; }
+  @media (min-width: 700px) {
+    .landing-page .landing-steps-grid::before {
+      content: "";
+      position: absolute;
+      top: 20px;
+      left: 12.5%;
+      right: 12.5%;
+      height: 0;
+      border-top: 2px dashed rgba(16, 185, 129, 0.3);
+      z-index: 0;
+    }
+  }
+  .landing-page .landing-step {
+    position: relative;
+    z-index: 1;
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .landing-page .landing-step:hover {
+    border-color: rgba(16, 185, 129, 0.4);
+    box-shadow: 0 0 24px -10px rgba(16, 185, 129, 0.4);
+  }
+  .landing-page .landing-step:first-child {
+    border-color: rgba(16, 185, 129, 0.5);
+    box-shadow: 0 0 30px -8px rgba(16, 185, 129, 0.45);
+  }
+  .landing-page .landing-step h3 { color: #ffffff; }
+  .landing-page .landing-step .text-muted { color: #9CA3AF; }
+  .landing-page .landing-step-icon { float: right; opacity: 0.6; }
+  .landing-page .landing-step-num {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34D399;
+  }
+
+  .landing-page .landing-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: #6B7280;
+  }
+  .landing-page .landing-footer a { color: #9CA3AF; }
+  .landing-page .landing-footer a:hover { color: #F3F4F6; }
+</style>
+
 <section class="landing-hero">
   <div class="landing-hero-text">
-    <h1>Run your pisowifi business from your phone.</h1>
+    <h1>Run your <span class="gradient-text">pisowifi business</span> from your phone.</h1>
     <p class="landing-hero-sub">
       Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
       pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
     </p>
     <div class="landing-cta-row">
-      <a href="{% url 'dashboard:generate_license' %}" class="btn btn-secondary">Generate a License Key</a>
-      <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-secondary">Download Box Software</a>
+      <a href="{% url 'dashboard:generate_license' %}" class="btn btn-primary">Generate a License Key</a>
+      <a href="{% url 'dashboard:download_placeholder' %}" class="btn btn-outline">Download Box Software</a>
     </div>
   </div>
 
-  <div class="landing-hero-logo">
-    <div class="landing-logo-badge">
-      <svg viewBox="0 0 200 200" class="landing-logo-mark" aria-hidden="true">
-        <defs>
-          <linearGradient id="barathrumLogoGradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#5fb6ff"/>
-            <stop offset="1" stop-color="#e8bf5a"/>
-          </linearGradient>
-        </defs>
-        <polygon points="100,14 178,56 178,144 100,186 22,144 22,56"
-                 fill="none" stroke="url(#barathrumLogoGradient)" stroke-width="7"
-                 stroke-linejoin="round"/>
-        <line x1="48" y1="100" x2="152" y2="100"
-              stroke="url(#barathrumLogoGradient)" stroke-width="2.5" opacity="0.45"/>
-        <text x="100" y="134" text-anchor="middle"
-              font-family="Arial, Helvetica, sans-serif" font-weight="800"
-              font-size="98" fill="url(#barathrumLogoGradient)">B</text>
-      </svg>
-      <span class="landing-logo-wordmark">BARATHRUM</span>
-      <span class="landing-logo-tagline">Software Solutions</span>
+  <div class="landing-hero-visual">
+    <div class="phone-mockup">
+      <div class="phone-mockup-header">
+        <div class="phone-mockup-title"><span class="dot"></span> Barathrum Dashboard</div>
+        <span class="phone-mockup-badge">Preview</span>
+      </div>
+      <div class="phone-mockup-stat">
+        <div class="phone-mockup-stat-label">Wallet balance</div>
+        <div class="phone-mockup-stat-value">₱12,450.00</div>
+      </div>
+      <div class="phone-mockup-bars">
+        <span style="height: 30%"></span>
+        <span style="height: 50%"></span>
+        <span style="height: 40%"></span>
+        <span style="height: 75%"></span>
+        <span style="height: 60%"></span>
+        <span style="height: 90%"></span>
+      </div>
+      <div class="phone-mockup-machines-label">Connected Machines</div>
+      <div class="phone-mockup-machine">
+        <span>Store #1 — Main Coinbox</span>
+        <span class="status"><span class="dot"></span> Online</span>
+      </div>
+      <div class="phone-mockup-machine">
+        <span>Store #2 — Annex Station</span>
+        <span class="status"><span class="dot"></span> Online</span>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="landing-steps">
+<section class="landing-steps" id="how-it-works">
   <h2>How it works</h2>
   <div class="landing-steps-grid">
     <div class="landing-step">
