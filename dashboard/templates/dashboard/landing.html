@@ -63,31 +63,31 @@
   .landing-page .smoke-blob {
     position: absolute;
     border-radius: 50%;
-    filter: blur(70px);
-    opacity: 0.35;
+    filter: blur(60px);
+    opacity: 0.55;
     will-change: transform;
   }
   .landing-page .smoke-blob-1 {
-    width: 480px; height: 480px;
-    top: -120px; left: -100px;
-    background: radial-gradient(circle, #1e3a8a, transparent 70%);
+    width: 500px; height: 500px;
+    top: 40px; left: -60px;
+    background: radial-gradient(circle, #2563eb, transparent 70%);
     animation: smoke-drift-1 34s ease-in-out infinite;
   }
   .landing-page .smoke-blob-2 {
-    width: 420px; height: 420px;
-    top: 20%; right: -140px;
-    background: radial-gradient(circle, #0e2a4a, transparent 70%);
+    width: 460px; height: 460px;
+    top: 10%; right: 5%;
+    background: radial-gradient(circle, #1d4ed8, transparent 70%);
     animation: smoke-drift-2 40s ease-in-out infinite;
   }
   .landing-page .smoke-blob-3 {
-    width: 380px; height: 380px;
-    bottom: -100px; left: 30%;
-    background: radial-gradient(circle, #172554, transparent 70%);
+    width: 420px; height: 420px;
+    bottom: 5%; left: 30%;
+    background: radial-gradient(circle, #1e40af, transparent 70%);
     animation: smoke-drift-3 46s ease-in-out infinite;
   }
   @keyframes smoke-drift-1 {
     0%, 100% { transform: translate(0, 0) scale(1); }
-    50% { transform: translate(120px, 80px) scale(1.15); }
+    50% { transform: translate(140px, 90px) scale(1.15); }
   }
   @keyframes smoke-drift-2 {
     0%, 100% { transform: translate(0, 0) scale(1); }
@@ -101,8 +101,13 @@
     .landing-page .smoke-blob { animation: none; }
   }
   /* Everything else on the page needs to sit above the fixed smoke layer. */
+  /* Content needs to sit above the fixed smoke layer -- scoped to the actual content
+     sections (not `> *`, which would also match .smoke-layer itself and flip its
+     position from fixed to relative, collapsing it to zero height). */
   .landing-page .topbar,
-  .landing-page .landing-main > * { position: relative; z-index: 1; }
+  .landing-page .landing-hero,
+  .landing-page .landing-steps,
+  .landing-page .landing-footer { position: relative; z-index: 1; }
 
   .landing-page .landing-hero { align-items: center; }
   .landing-page .landing-hero h1 { color: #ffffff; }
