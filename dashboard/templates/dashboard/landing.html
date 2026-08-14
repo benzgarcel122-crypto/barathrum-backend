@@ -49,6 +49,61 @@
   }
   .landing-page .landing-main { color: #F3F4F6; }
 
+  /* Ambient smoke layer -- a nod to Barathrum's Charge of Darkness trail. Pure CSS (no game
+     assets), a few large blurred blobs in blue/dark tones drifting slowly behind the content.
+     Fixed to the viewport so it's visible across the whole page, not just the hero; pointer-
+     events:none + negative z-index so it never blocks clicks or sits above real content. */
+  .landing-page .smoke-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .landing-page .smoke-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(70px);
+    opacity: 0.35;
+    will-change: transform;
+  }
+  .landing-page .smoke-blob-1 {
+    width: 480px; height: 480px;
+    top: -120px; left: -100px;
+    background: radial-gradient(circle, #1e3a8a, transparent 70%);
+    animation: smoke-drift-1 34s ease-in-out infinite;
+  }
+  .landing-page .smoke-blob-2 {
+    width: 420px; height: 420px;
+    top: 20%; right: -140px;
+    background: radial-gradient(circle, #0e2a4a, transparent 70%);
+    animation: smoke-drift-2 40s ease-in-out infinite;
+  }
+  .landing-page .smoke-blob-3 {
+    width: 380px; height: 380px;
+    bottom: -100px; left: 30%;
+    background: radial-gradient(circle, #172554, transparent 70%);
+    animation: smoke-drift-3 46s ease-in-out infinite;
+  }
+  @keyframes smoke-drift-1 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(120px, 80px) scale(1.15); }
+  }
+  @keyframes smoke-drift-2 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-100px, 60px) scale(1.1); }
+  }
+  @keyframes smoke-drift-3 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(80px, -60px) scale(1.2); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .landing-page .smoke-blob { animation: none; }
+  }
+  /* Everything else on the page needs to sit above the fixed smoke layer. */
+  .landing-page .topbar,
+  .landing-page .landing-main > * { position: relative; z-index: 1; }
+
   .landing-page .landing-hero { align-items: center; }
   .landing-page .landing-hero h1 { color: #ffffff; }
   .landing-page .landing-hero h1 .gradient-text {
@@ -181,6 +236,12 @@
   .landing-page .landing-footer a { color: #9CA3AF; }
   .landing-page .landing-footer a:hover { color: #F3F4F6; }
 </style>
+
+<div class="smoke-layer" aria-hidden="true">
+  <div class="smoke-blob smoke-blob-1"></div>
+  <div class="smoke-blob smoke-blob-2"></div>
+  <div class="smoke-blob smoke-blob-3"></div>
+</div>
 
 <section class="landing-hero">
   <div class="landing-hero-text">
