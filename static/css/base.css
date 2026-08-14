@@ -50,6 +50,14 @@ a { color: var(--color-accent-dark); }
   font-weight: 700;
   font-size: 1.1rem;
   letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar .brand-mark {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
 }
 .topbar .brand-sub {
   font-weight: 400;
