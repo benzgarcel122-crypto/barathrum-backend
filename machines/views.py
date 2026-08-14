@@ -90,18 +90,16 @@ def validate_license_view(request):
       and both still receive the same 200 "valid" response either way (the caller doesn't need to
       know or care which request happened to win the race).
 
-    Known, explicitly accepted limitation -- NOT resolved by this change, still gated on real
-    hardware (Session 65 open question #2, unchanged): there is no way today to distinguish "the
-    same physical box re-pairing after a reflash" from "a different box presenting a key that was
-    already activated elsewhere." Both cases hit this same code path and both succeed. This
-    endpoint does not attempt to guess a box-identity signal (MAC address, install token, etc.)
-    that doesn't exist yet -- building a wrong guess now would be worse than leaving this
-    honestly open, per this project's own standing preference for flagging real forks rather than
-    inventing an answer. This means, today, any device that knows a real, previously-activated
-    license key can "re-validate" successfully -- acceptable for now because the license_key
-    itself is already the sole credential this whole flow relies on (same trust model the
-    endpoint has always used), and because closing this gap requires information (real box
-    identity) that simply doesn't exist until STEP 1 hardware does.
+    Known limitation from the original version -- now CLOSED by this task (previously an
+    explicitly accepted gap, Session 65 open question #2): this endpoint used to treat "never
+    activated" and "already activated" identically, silently letting any caller who knew a real,
+    previously-activated license key "re-validate" it with zero proof of ownership. End Goal #21's
+    reflash-recovery flow requires these to be two distinct cases. Fixed per End Goal #21 (MPD):
+    if activated_at is already set, this endpoint now returns 409 with already_active: true
+    instead of silently succeeding -- the caller must go through unbind_license_view (password-
+    gated, End Goal #20) first, then call this endpoint again, which is exactly the two-step
+    recovery flow #21 specifies. This endpoint itself still never accepts or checks a password --
+    that proof lives solely in unbind_license_view, unchanged by this task.
 
     Rate limiting and normalization unchanged from the original version -- still mirrors
     machines/webhooks.py's paymongo_webhook_view pattern (csrf_exempt + require_POST), still the
@@ -135,11 +133,31 @@ def validate_license_view(request):
         # which case actually happened, per this task's explicit requirement.
         return JsonResponse({"valid": False, "message": "License key not recognized."}, status=404)
 
+    if license_obj.activated_at is not None:
+        # End Goal #21: this key is already active elsewhere (or on this same box's now-wiped
+        # prior installation). Do NOT update anything and do NOT touch the rate-limit/lockout
+        # counters -- this isn't a password attempt, so it is not gated by
+        # release_failed_attempts, which stays exclusively unbind_license_view's mechanism.
+        # The caller must Unbind (password-gated) first, then Bind again.
+        return JsonResponse(
+            {
+                "valid": False,
+                "already_active": True,
+                "message": (
+                    "This license is already active on another installation. If you're "
+                    "recovering this box after a reflash, finish creating your admin account, "
+                    "then use Unbind License (with the recovery password) followed by Bind "
+                    "License from the License page."
+                ),
+            },
+            status=409,
+        )
+
     # Activation write: idempotent, race-safe first-activation. Matches (and updates) exactly one
-    # row only the first time this key is ever validated -- a second, third, Nth call for an
-    # already-activated key matches zero rows here (activated_at is no longer NULL) and simply
-    # falls through to the same 200 response below, since re-validating an already-activated key
-    # is a normal, expected, successful case, not an error.
+    # row only the first time this key is ever validated -- the already-activated case is now
+    # handled entirely above, so this .filter(...).update(...) always matches exactly one row
+    # here (or zero only in the vanishingly rare race where another concurrent request just won
+    # the same first-activation, in which case both still receive the same 200 response below).
     License.objects.filter(pk=license_obj.pk, activated_at__isnull=True).update(
         activated_at=timezone.now()
     )
