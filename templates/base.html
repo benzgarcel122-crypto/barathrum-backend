@@ -9,7 +9,23 @@
 <body class="{% block body_class %}{% endblock %}">
   <div class="app-shell">
     <div class="topbar">
-      <span class="brand">Barathrum<span class="brand-sub">Software</span></span>
+      <span class="brand">
+        <svg viewBox="0 0 200 200" class="brand-mark" aria-hidden="true">
+          <defs>
+            <linearGradient id="brandMarkGradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#5fb6ff"/>
+              <stop offset="1" stop-color="#e8bf5a"/>
+            </linearGradient>
+          </defs>
+          <polygon points="100,14 178,56 178,144 100,186 22,144 22,56"
+                   fill="none" stroke="url(#brandMarkGradient)" stroke-width="10"
+                   stroke-linejoin="round"/>
+          <text x="100" y="134" text-anchor="middle"
+                font-family="Arial, Helvetica, sans-serif" font-weight="800"
+                font-size="98" fill="url(#brandMarkGradient)">B</text>
+        </svg>
+        Barathrum<span class="brand-sub">Software</span>
+      </span>
       {% block topbar_actions %}{% endblock %}
     </div>
     {% block nav %}{% endblock %}
