@@ -25,9 +25,10 @@ class Command(BaseCommand):
     decrement_machine_days.py's own docstring already takes toward cleanup_unclaimed_licenses.py.
 
     CRITICAL SCOPE BOUNDARY: this command touches License.license_points ONLY. It never reads or
-    writes Machine.days_remaining or Account.balance_points -- an operator sending points into a
-    license (dashboard:send_license_points) is a completely separate, explicit action; this
-    command only ever drains what's already there, one point per PH-calendar-day.
+    writes Machine.days_remaining or Account.balance_points -- crediting license_points happens
+    entirely inside dashboard:topup/dashboard:bulk_topup (merged in the session that removed the
+    old standalone "Send License Points" view/URL); this command only ever drains what's already
+    there, one point per PH-calendar-day, regardless of how it got funded.
 
     IDEMPOTENCY GUARD: the same CronJobRun + PH-calendar-date guard pattern as
     decrement_machine_days.py, under its own job_name ("decrement_license_points") so the two

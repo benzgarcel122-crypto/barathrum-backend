@@ -1,5 +1,7 @@
 import json
+from datetime import timedelta
 
+from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils import timezone
@@ -195,3 +197,77 @@ def license_points_view(request):
     return JsonResponse(
         {"valid": True, "license_points": license_obj.license_points}, status=200
     )
+
+
+# --- Box-side license unbind (End Goals #20) ---------------------------------------------------
+#
+# Separate, dedicated rate-limit cache key from every other box-facing endpoint's -- same
+# reasoning as license_points_view's own counter above: a distinct usage pattern (a rare,
+# deliberate operator action, not a periodic poll) deserves its own budget that can never be
+# exhausted by, or exhaust, any other endpoint's counter for the same IP.
+def _unbind_license_rate_limited(request):
+    cache_key = f"box_unbind_license:ratelimit:{_client_ip(request)}"
+    try:
+        attempts = cache.incr(cache_key)
+    except ValueError:
+        cache.set(cache_key, 1, timeout=RATE_LIMIT_WINDOW_SECONDS)
+        attempts = 1
+    return attempts > RATE_LIMIT_MAX_ATTEMPTS
+
+
+@csrf_exempt
+@require_POST
+def unbind_license_view(request):
+    """
+    POST /api/box/unbind-license/ -- End Goals #20. Box-side deactivation, gated by the
+    license's own recovery password (set once at generation time, dashboard/views.py's old
+    release_license_view used to check this; that check moves here, box-side, since the box
+    is the thing actually being deactivated). Reuses License.release_failed_attempts /
+    release_locked_until -- same 5-attempt / 15-minute lockout semantics as before, just a
+    different caller.
+
+    On success: License.activated_at is cleared (set to None) -- the license's status becomes
+    "deactivated but still claimed" (End Goal #20's own wording) if a Machine still claims it,
+    or simply fully inert if it was already unclaimed. This does NOT touch license_points or
+    account/claim status at all -- those are independent axes (End Goals closing note).
+    """
+    if _unbind_license_rate_limited(request):
+        return JsonResponse(
+            {"valid": False, "message": "Too many attempts. Please wait a few minutes and try again."},
+            status=429,
+        )
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"valid": False, "message": "Malformed request body."}, status=400)
+
+    license_key = (payload.get("license_key") or "").strip().upper()
+    password = payload.get("password", "")
+    if not license_key:
+        return JsonResponse({"valid": False, "message": "Enter your license key."}, status=400)
+
+    try:
+        license_obj = License.objects.get(license_key=license_key)
+    except License.DoesNotExist:
+        return JsonResponse({"valid": False, "message": "License key not recognized."}, status=404)
+
+    now = timezone.now()
+    if license_obj.release_locked_until and now < license_obj.release_locked_until:
+        remaining = int((license_obj.release_locked_until - now).total_seconds())
+        return JsonResponse(
+            {"valid": False, "message": f"Too many incorrect attempts. Try again in {remaining} seconds."},
+            status=423,
+        )
+
+    if not check_password(password, license_obj.recovery_password_hash):
+        license_obj.release_failed_attempts += 1
+        if license_obj.release_failed_attempts >= License.RELEASE_MAX_FAILED_ATTEMPTS:
+            license_obj.release_locked_until = now + timedelta(minutes=15)
+            license_obj.release_failed_attempts = 0
+        license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
+        return JsonResponse({"valid": False, "message": "Incorrect recovery password."}, status=403)
+
+    License.objects.filter(pk=license_obj.pk).update(
+        activated_at=None, release_failed_attempts=0, release_locked_until=None
+    )
+    return JsonResponse({"valid": True, "message": "License unbound."}, status=200)

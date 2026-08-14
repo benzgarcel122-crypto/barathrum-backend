@@ -242,6 +242,63 @@ class SendPointsTests(TestCase):
         self.assertContains(resp, "/send-points/")
 
 
+class LicensePointsExclusionTests(TestCase):
+    """
+    End Goal #23 guardrail: License.license_points must never be movable by send_points_view or
+    any other wallet-transfer path. Nothing in the current codebase lets this happen -- this class
+    exists so a future change can never quietly wire the two systems together without a loud,
+    immediate test failure. See accounts/models.py::PointTransfer and
+    dashboard/views.py::send_points_view for the accompanying warning docstrings.
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=500
+        )
+        self.acc2 = Account.objects.create_user(
+            phone_number="09179876543", display_name="Op Two", balance_points=0
+        )
+
+    def test_wallet_transfer_never_touches_license_points(self):
+        lic = License.objects.create(account=self.acc1, license_points=50)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key, nickname="Box A")
+        license_points_before = lic.license_points
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/",
+            {"recipient_phone": "09179876543", "amount": "100", "note": "float"},
+        )
+        self.assertRedirects(resp, "/send-points/")
+
+        # The transfer itself worked normally...
+        self.acc1.refresh_from_db()
+        self.acc2.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 400)
+        self.assertEqual(self.acc2.balance_points, 100)
+        transfer = PointTransfer.objects.get()
+        self.assertEqual(transfer.sender_id, self.acc1.id)
+        self.assertEqual(transfer.receiver_id, self.acc2.id)
+        self.assertEqual(transfer.amount, 100)
+
+        # ...and the license's own points balance is byte-identical to before the transfer.
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, license_points_before)
+        self.assertEqual(lic.license_points, 50)
+
+    def test_point_transfer_model_has_no_license_relationship(self):
+        """Static/structural guarantee: fails immediately if a future migration ever adds an FK
+        (or any other field) from PointTransfer to License or Machine, which is the most likely
+        way this rule could get silently broken."""
+        for field in PointTransfer._meta.get_fields():
+            self.assertNotEqual(field.name, "license")
+            self.assertNotEqual(field.name, "machine")
+            related_model = getattr(field, "related_model", None)
+            if related_model is not None:
+                self.assertNotEqual(related_model.__name__, "License")
+                self.assertNotEqual(related_model.__name__, "Machine")
+
+
 class LicenseGenerationFeeTests(TestCase):
     """Anti-abuse fee on generate_license_view: LICENSE_GENERATION_FEE points deducted from the
     generating operator's own wallet balance, per this task's numbered test cases."""
@@ -328,10 +385,13 @@ class LicenseGenerationHistoryTests(TestCase):
         self.assertNotContains(resp, other_op_lic.license_key)
 
 
-class ReleaseLicenseFeatureTests(TestCase):
+class RemoveLicenseFeatureTests(TestCase):
     """
-    STEP 2.7 items 2-4 (Session 48 design): recovery-password-gated License Release, mapped
-    directly to this task's numbered TEST CASES 1-10 (see Developer prompt).
+    Dashboard-side "Remove License" (dashboard:remove_license) -- replaces the old password-
+    gated Release License. Test case 4 from the Developer prompt: no password anywhere in this
+    flow, confirm-only, does not touch License at all. The old password/lockout coverage
+    (TC5/TC6 from the original Release License feature) now lives box-side instead, see
+    machines.tests.UnbindLicenseViewTests for that behavior's new home.
     """
 
     def setUp(self):
@@ -342,102 +402,18 @@ class ReleaseLicenseFeatureTests(TestCase):
             phone_number="09179876543", display_name="Op Two", balance_points=100
         )
 
-    # TC1: Generate a license without filling either password field -> rejected, no fee
-    # deducted, no License row created.
-    def test_tc1_generate_without_password_rejected(self):
-        self.client.force_login(self.acc1)
-        resp = self.client.post("/licenses/generate/")
-        self.assertRedirects(resp, "/licenses/generate/")
-        self.acc1.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 100)
-        self.assertEqual(License.objects.count(), 0)
-
-    # TC2: Generate a license with mismatched password/confirm -> rejected, no fee deducted.
-    def test_tc2_generate_with_mismatched_passwords_rejected(self):
-        self.client.force_login(self.acc1)
-        resp = self.client.post(
-            "/licenses/generate/",
-            {"recovery_password": "recover123", "recovery_password_confirm": "different456"},
-        )
-        self.assertRedirects(resp, "/licenses/generate/")
-        self.acc1.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 100)
-        self.assertEqual(License.objects.count(), 0)
-
-    # TC3: Generate a license correctly -> License created with a hashed (not plaintext)
-    # recovery_password_hash, fee deducted as before.
-    def test_tc3_generate_correctly_hashes_password_and_deducts_fee(self):
-        self.client.force_login(self.acc1)
-        resp = self.client.post(
-            "/licenses/generate/",
-            {"recovery_password": "recover123", "recovery_password_confirm": "recover123"},
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.acc1.refresh_from_db()
-        self.assertEqual(self.acc1.balance_points, 80)  # 100 - LICENSE_GENERATION_FEE(20)
-        lic = License.objects.get()
-        self.assertNotEqual(lic.recovery_password_hash, "recover123")
-        self.assertNotEqual(lic.recovery_password_hash, "")
-        self.assertTrue(check_password("recover123", lic.recovery_password_hash))
-
-    # TC4: Claim a brand-new (never-claimed) license via Add Machine -> works exactly as
-    # before, Machine created, no password prompt anywhere in this flow.
-    def test_tc4_claim_brand_new_license_unchanged(self):
-        lic = License.objects.create(account=None, recovery_password_hash=make_password("pw"))
-        self.client.force_login(self.acc1)
-        resp = self.client.post(
-            "/machines/add/", {"license_key": lic.license_key, "nickname": "Corner"}
-        )
-        self.assertEqual(resp.status_code, 200)
-        machine = Machine.objects.get(license_key=lic.license_key)
-        self.assertEqual(machine.owner_id, self.acc1.id)
-        self.assertIsNone(machine.removed_at)
-        self.assertNotContains(resp, "password")
-
-    # TC5: Own a claimed machine, go to Release License, enter the WRONG password -> rejected,
-    # machine still claimed and still visible on the dashboard, release_failed_attempts
-    # incremented.
-    def test_tc5_wrong_password_rejected_and_increments_counter(self):
+    def test_get_renders_confirm_page_no_password_field_anywhere(self):
         lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
         machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key, nickname="Box A")
 
         self.client.force_login(self.acc1)
-        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "wrongpw"})
+        resp = self.client.get(f"/machines/{machine.id}/remove/")
+
         self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "password")
+        self.assertNotContains(resp, "Password")
 
-        machine.refresh_from_db()
-        lic.refresh_from_db()
-        self.assertIsNone(machine.removed_at)
-        self.assertEqual(lic.release_failed_attempts, 1)
-
-        home_resp = self.client.get("/")
-        self.assertContains(home_resp, "Box A")
-
-    # TC6: Repeat wrong password 5 times -> 6th attempt (even if correct) is blocked by the
-    # 15-minute lockout message; confirm release_locked_until is set in the DB.
-    def test_tc6_five_wrong_attempts_locks_out_even_correct_password(self):
-        lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
-        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
-
-        self.client.force_login(self.acc1)
-        for _ in range(5):
-            self.client.post(f"/machines/{machine.id}/release/", {"password": "wrongpw"})
-
-        lic.refresh_from_db()
-        self.assertEqual(lic.release_failed_attempts, 0)  # reset when lockout triggers
-        self.assertIsNotNone(lic.release_locked_until)
-        self.assertGreater(lic.release_locked_until, timezone.now())
-
-        # 6th attempt, even with the CORRECT password, is blocked by the lockout window.
-        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
-        self.assertContains(resp, "Too many incorrect attempts")
-        machine.refresh_from_db()
-        self.assertIsNone(machine.removed_at)
-
-    # TC7: Own a claimed machine with days_remaining > 0 and existing Transaction history,
-    # release it with the CORRECT password -> machine disappears from dashboard home
-    # immediately; days_remaining and Transaction rows unchanged; Machine.removed_at set.
-    def test_tc7_correct_password_releases_and_preserves_balance_and_history(self):
+    def test_post_sets_removed_at_and_redirects_home(self):
         lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
         machine = Machine.objects.create(
             owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=42
@@ -445,14 +421,11 @@ class ReleaseLicenseFeatureTests(TestCase):
         Transaction.objects.create(
             machine=machine, bundle_type="30day", days_added=30, amount_paid_pesos=27
         )
-        Transaction.objects.create(
-            machine=machine, bundle_type="60day", days_added=60, amount_paid_pesos=52
-        )
         txn_count_before = Transaction.objects.filter(machine=machine).count()
         days_before = machine.days_remaining
 
         self.client.force_login(self.acc1)
-        resp = self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+        resp = self.client.post(f"/machines/{machine.id}/remove/")
         self.assertRedirects(resp, "/")
 
         machine.refresh_from_db()
@@ -463,43 +436,30 @@ class ReleaseLicenseFeatureTests(TestCase):
         home_resp = self.client.get("/")
         self.assertNotContains(home_resp, "Box A")
 
-    # TC8: Re-add that same license key via Add Machine (different or same account) -> confirm
-    # it's the SAME Machine row being reactivated (same Machine.id, not a new row),
-    # days_remaining and Transaction history are exactly what they were before release,
-    # removed_at is now NULL, owner is the new claimant.
-    def test_tc8_reclaim_after_release_reactivates_same_machine_row(self):
+    def test_reclaim_after_remove_reactivates_same_machine_row(self):
         lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
         machine = Machine.objects.create(
             owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=42
         )
-        Transaction.objects.create(
-            machine=machine, bundle_type="30day", days_added=30, amount_paid_pesos=27
-        )
         original_machine_id = machine.id
-        txn_count_before = Transaction.objects.filter(machine=machine).count()
         days_before = machine.days_remaining
 
         self.client.force_login(self.acc1)
-        self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+        self.client.post(f"/machines/{machine.id}/remove/")
 
-        # A different account reclaims it.
         self.client.force_login(self.acc2)
         resp = self.client.post(
             "/machines/add/", {"license_key": lic.license_key, "nickname": "Reclaimed Box"}
         )
         self.assertEqual(resp.status_code, 200)
 
-        self.assertEqual(Machine.objects.filter(license_key=lic.license_key).count(), 1)
         reactivated = Machine.objects.get(license_key=lic.license_key)
         self.assertEqual(reactivated.id, original_machine_id)
         self.assertIsNone(reactivated.removed_at)
         self.assertEqual(reactivated.owner_id, self.acc2.id)
         self.assertEqual(reactivated.days_remaining, days_before)
-        self.assertEqual(Transaction.objects.filter(machine=reactivated).count(), txn_count_before)
 
-    # TC9: Regression -- a released machine no longer appears for its former owner in
-    # home_view, machine_detail_view (404), topup_view (404), and bulk_topup_view.
-    def test_tc9_released_machine_excluded_from_owner_views(self):
+    def test_removed_machine_excluded_from_owner_views(self):
         lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
         machine = Machine.objects.create(
             owner=self.acc1, license_key=lic.license_key, nickname="Box A", days_remaining=10
@@ -507,30 +467,44 @@ class ReleaseLicenseFeatureTests(TestCase):
         machine_id = machine.id
 
         self.client.force_login(self.acc1)
-        self.client.post(f"/machines/{machine.id}/release/", {"password": "correctpw"})
+        self.client.post(f"/machines/{machine.id}/remove/")
 
+        # First GET consumes the one-time success flash message (which legitimately names the
+        # machine, e.g. "Box A removed from your dashboard...") -- the second GET confirms the
+        # machine listing area itself no longer shows it, independent of that message.
+        self.client.get("/")
         home_resp = self.client.get("/")
         self.assertNotContains(home_resp, "Box A")
 
         detail_resp = self.client.get(f"/machines/{machine_id}/")
         self.assertEqual(detail_resp.status_code, 404)
 
-        topup_resp = self.client.get(f"/machines/{machine_id}/topup/")
-        self.assertEqual(topup_resp.status_code, 404)
-
-        bulk_resp = self.client.get(f"/machines/bulk-topup/?machine_id={machine_id}")
-        self.assertRedirects(bulk_resp, "/")  # bulk_topup_view: no matching machines -> redirect
-
-    # Supporting check for TC5/TC9: only the machine's owner can see/reach the Release License
-    # action at all -- another logged-in account gets a 404, same pattern as every other
-    # owner-scoped Machine view in this file.
-    def test_release_license_view_404s_for_non_owner(self):
+    def test_remove_license_view_404s_for_non_owner(self):
         lic = License.objects.create(account=self.acc1, recovery_password_hash=make_password("correctpw"))
         machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
 
         self.client.force_login(self.acc2)
-        resp = self.client.get(f"/machines/{machine.id}/release/")
+        resp = self.client.get(f"/machines/{machine.id}/remove/")
         self.assertEqual(resp.status_code, 404)
+
+    def test_does_not_touch_license_row_at_all(self):
+        """This view no longer looks up or modifies License in any way -- confirm the recovery
+        password fields and activated_at are completely untouched by a remove."""
+        lic = License.objects.create(
+            account=self.acc1, recovery_password_hash=make_password("correctpw"), activated_at=timezone.now()
+        )
+        machine = Machine.objects.create(owner=self.acc1, license_key=lic.license_key)
+        hash_before = lic.recovery_password_hash
+        activated_before = lic.activated_at
+
+        self.client.force_login(self.acc1)
+        self.client.post(f"/machines/{machine.id}/remove/")
+
+        lic.refresh_from_db()
+        self.assertEqual(lic.recovery_password_hash, hash_before)
+        self.assertEqual(lic.activated_at, activated_before)
+        self.assertEqual(lic.release_failed_attempts, 0)
+        self.assertIsNone(lic.release_locked_until)
 
 
 class GenerateLicenseHistoryZeroBalanceCountdownTests(TestCase):

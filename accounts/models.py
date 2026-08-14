@@ -210,6 +210,15 @@ class PointTransfer(models.Model):
     (asked, no answer yet as of this task). Built in since it's low-cost and matches the Gift
     Points precedent (which also has an optional reason/note field) -- trivial to drop via a
     follow-up migration if the PM says no.
+
+    WARNING (End Goal #23, MPD): this model moves Account.balance_points ONLY. Per End Goal #23,
+    machines.models.License.license_points must NEVER be read, written, or referenced by this
+    model, by dashboard/views.py::send_points_view, or by anything else that transfers funds
+    between two operator accounts -- license points are a per-license, per-machine balance with a
+    different lifecycle (Top Up credits it, the daily decrement_license_points cron debits it, per
+    MPD tracker rows 30/32) and are never eligible for peer-to-peer transfer under any
+    circumstance. If a future change ever adds a relationship from this model to License or
+    Machine, that is a violation of #23, not an intended extension.
     """
 
     sender = models.ForeignKey(

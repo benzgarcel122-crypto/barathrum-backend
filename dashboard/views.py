@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from decimal import Decimal
  
@@ -29,6 +30,7 @@ from machines.models import (
 from machines.paymongo_client import PayMongoAPIError
  
 Account = get_user_model()
+logger = logging.getLogger(__name__)
  
 # STEP: license generation fee (anti-abuse) -- deducted from the generating operator's own wallet
 # balance in generate_license_view below. Named constant, used everywhere the fee amount matters
@@ -363,84 +365,36 @@ def add_machine_view(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
-def release_license_view(request, machine_id):
+def remove_license_view(request, machine_id):
     """
-    STEP 2.7 items 2-4 (Session 48 design): lets an operator release their own claimed machine
-    back to unclaimed status, gated by the license's recovery password (set at generation time
-    in generate_license_view). Solves the real-world case of an operator reflashing their own
-    box's SSD and needing to reuse the same license -- distinct from the older, rarer
-    multi-dashboard "Remove Machine" scenario (Session 32), which had no ownership-match
-    requirement on re-claim; this feature exists specifically because that generic release path
-    would let a stranger snatch the license mid-window.
+    Dashboard-side unclaim (End Goals closing note's "claimed" axis) -- replaces the old
+    password-gated release_license_view. The password-gated box-side deactivation this used to
+    also require now lives entirely on the box's own admin panel (End Goal #20,
+    machines/views.py::unbind_license_view) -- these are two independent actions, either order,
+    per this session's PM decision. No password here: this view is already scoped to
+    owner=request.user, so there's no "stranger" risk the old password gate was guarding against
+    at the dashboard layer.
 
     On success: Machine.removed_at is set (row kept, not deleted), so days_remaining and every
     Transaction row survive untouched until either a re-claim via add_machine_view (which
     reactivates this exact row) or the 20-day zero-balance cleanup job eventually sweeps it up.
+    Does NOT touch License at all -- no lookup, no field changes -- unlike the old view.
     """
     machine = get_object_or_404(
         Machine, id=machine_id, owner=request.user, removed_at__isnull=True
     )
 
-    try:
-        license_obj = License.objects.get(license_key=machine.license_key)
-    except License.DoesNotExist:
-        # Should not realistically happen given the FK-by-string design between Machine and
-        # License, but fail gracefully rather than a 500 if it ever does.
-        messages.error(request, "Something went wrong looking up this license. Try again later.")
-        return redirect("dashboard:machine_detail", machine_id=machine.id)
-
-    # Computed once and passed to every render below (GET, and both POST outcomes) so the
-    # template can show a live countdown and gray out the password field whenever a lockout is
-    # active -- not just immediately after the POST that triggered it. release_locked_until is
-    # passed as an ISO 8601 string (JS-friendly) rather than the raw Python datetime, whose
-    # default str() is what produced the unreadable "2026-07-28 02:32:30.226130+00:00" message
-    # this replaces.
-    def _lockout_context():
-        is_locked = bool(
-            license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until
-        )
-        return {
-            "active_nav": "dashboard",
-            "machine": machine,
-            "is_locked": is_locked,
-            "release_locked_until_iso": license_obj.release_locked_until.isoformat()
-            if is_locked
-            else None,
-        }
-
     if request.method == "GET":
-        return render(request, "dashboard/release_license.html", _lockout_context())
+        return render(request, "dashboard/remove_license.html", {"active_nav": "dashboard", "machine": machine})
 
-    if license_obj.release_locked_until and timezone.now() < license_obj.release_locked_until:
-        messages.error(request, "Too many incorrect attempts. Try again in 15 minutes.")
-        return render(request, "dashboard/release_license.html", _lockout_context())
-
-    password = request.POST.get("password", "")
-
-    if check_password(password, license_obj.recovery_password_hash):
-        with db_transaction.atomic():
-            machine.removed_at = timezone.now()
-            machine.save(update_fields=["removed_at"])
-
-            license_obj.release_failed_attempts = 0
-            license_obj.release_locked_until = None
-            license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
-
-        messages.success(request, "License released. It can now be re-added on any box.")
-        return redirect("dashboard:home")
-
-    # Incorrect password: increment the failed-attempt counter, same throttle pattern as
-    # accounts.models.OTPCode. Never reveal the remaining-attempts count in the UI.
-    license_obj.release_failed_attempts += 1
-    if license_obj.release_failed_attempts >= License.RELEASE_MAX_FAILED_ATTEMPTS:
-        license_obj.release_locked_until = timezone.now() + timedelta(minutes=15)
-        # Reset the counter in the same save so the next window, after the cooldown expires,
-        # starts fresh rather than being immediately re-locked.
-        license_obj.release_failed_attempts = 0
-    license_obj.save(update_fields=["release_failed_attempts", "release_locked_until"])
-
-    messages.error(request, "Incorrect recovery password.")
-    return render(request, "dashboard/release_license.html", _lockout_context())
+    machine.removed_at = timezone.now()
+    machine.save(update_fields=["removed_at"])
+    messages.success(
+        request,
+        f"{machine.nickname or machine.license_key} removed from your dashboard. Its balance and "
+        f"history are kept -- add it back later with the same license key.",
+    )
+    return redirect("dashboard:home")
 
 
 def download_placeholder_view(request):
@@ -456,6 +410,8 @@ def download_placeholder_view(request):
 def machine_detail_view(request, machine_id):
     machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
     transactions = machine.transactions.order_by("-created_at")[:20]
+    license_obj = License.objects.filter(license_key=machine.license_key).first()
+    is_activated = license_obj.is_activated if license_obj else False
     return render(
         request,
         "dashboard/machine_detail.html",
@@ -464,6 +420,7 @@ def machine_detail_view(request, machine_id):
             "machine": machine,
             "color": _status_color(machine.days_remaining),
             "transactions": transactions,
+            "is_activated": is_activated,
         },
     )
  
@@ -478,6 +435,14 @@ def topup_view(request, machine_id):
     just gated on a real balance check instead of being unconditionally free.
     """
     machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
+    license_obj = License.objects.filter(license_key=machine.license_key).first()
+    # No is_activated guard here, deliberately -- Top Up has never required activation for
+    # days_remaining (fully box-independent), and license_points funded via Top Up should behave
+    # the same way: a license can validly receive points before/without any box ever binding
+    # (End Goals closing note explicitly supports "unclaimed but activated" as a real state). A
+    # missing License row (should not happen in practice, same posture as every other lookup
+    # like this in this codebase) never blocks the days top-up -- it only means the
+    # license_points half is silently skipped below, with a logged warning.
  
     if request.method == "GET":
         tab = request.GET.get("tab", "bundles")
@@ -547,6 +512,20 @@ def topup_view(request, machine_id):
         # top-up is applied, not up to a day later.
         machine.zero_balance_since = None
         machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
+
+        # NEW: mirror the exact same days_added amount into License.license_points, same
+        # transaction, same payment, no second charge. F()-based increment (not a
+        # read-modify-write) for the same lost-update-avoidance reason send_license_points_view
+        # (now deleted) used it -- consistent with every other points-mutation in this codebase.
+        if license_obj is not None:
+            License.objects.filter(pk=license_obj.pk).update(
+                license_points=models.F("license_points") + days_added
+            )
+        else:
+            logger.warning(
+                "topup_view: no License row found for license_key=%s -- days credited, "
+                "license_points NOT credited.", machine.license_key,
+            )
  
         Transaction.objects.create(
             machine=machine,
@@ -561,79 +540,6 @@ def topup_view(request, machine_id):
         f"(₱{price_points} from your wallet).",
     )
     return redirect("dashboard:home")
- 
- 
-@login_required
-@require_http_methods(["GET", "POST"])
-def send_license_points_view(request, machine_id):
-    """
-    End Goals #17: send points from the operator's own wallet (Account.balance_points) into
-    this machine's bound License.license_points, unlocking unlimited concurrent access once
-    the license has any positive balance (End Goals #14). Same minimum floor as every other
-    wallet-spending action in this app (MINIMUM_TOPUP_POINTS), same atomic pattern as topup_view.
-
-    Deliberately a separate view/URL/template from topup_view, not a third tab bolted onto it --
-    topup_view funds Machine.days_remaining (day-to-day operation) and this funds a completely
-    different balance (License.license_points, concurrent-access unlock) serving a different
-    purpose. Keeping them separate means zero risk of regressing topup_view's already-tested
-    behavior.
-    """
-    machine = get_object_or_404(Machine, id=machine_id, owner=request.user, removed_at__isnull=True)
-    try:
-        license_obj = License.objects.get(license_key=machine.license_key)
-    except License.DoesNotExist:
-        # Should not happen in practice (every Machine's license_key traces back to a real
-        # License row per generate_license_view/add_machine_view's own construction) -- guarded
-        # defensively rather than assumed, same posture add_machine_view already takes.
-        messages.error(request, "Could not find the license record for this machine.")
-        return redirect("dashboard:machine_detail", machine_id=machine.id)
-
-    if request.method == "GET":
-        return render(
-            request,
-            "dashboard/send_license_points.html",
-            {
-                "active_nav": "dashboard",
-                "machine": machine,
-                "license_points": license_obj.license_points,
-                "balance_points": request.user.balance_points,
-            },
-        )
-
-    try:
-        amount = int(request.POST.get("amount", "0"))
-    except ValueError:
-        amount = 0
-    if amount < MINIMUM_TOPUP_POINTS:
-        messages.error(request, f"Minimum license points insertion is {MINIMUM_TOPUP_POINTS} points.")
-        return redirect("dashboard:send_license_points", machine_id=machine.id)
-
-    if request.user.balance_points < amount:
-        messages.error(
-            request,
-            f"Not enough wallet balance (need ₱{amount}, you have ₱{request.user.balance_points}). "
-            f"Top up your wallet first.",
-        )
-        return redirect("dashboard:send_license_points", machine_id=machine.id)
-
-    with db_transaction.atomic():
-        account = Account.objects.select_for_update().get(pk=request.user.pk)
-        if account.balance_points < amount:
-            messages.error(request, "Not enough wallet balance for this insertion.")
-            return redirect("dashboard:send_license_points", machine_id=machine.id)
-        account.balance_points -= amount
-        account.save(update_fields=["balance_points"])
-
-        License.objects.filter(pk=license_obj.pk).update(
-            license_points=models.F("license_points") + amount
-        )
-
-    messages.success(
-        request,
-        f"Sent {amount} points to {machine.nickname or machine.license_key}'s license "
-        f"(₱{amount} from your wallet).",
-    )
-    return redirect("dashboard:machine_detail", machine_id=machine.id)
  
  
 @login_required
@@ -707,6 +613,20 @@ def bulk_topup_view(request):
             # topup_view above -- applies per-machine within this batch.
             machine.zero_balance_since = None
             machine.save(update_fields=["days_remaining", "last_topup_bundle_type", "zero_balance_since"])
+
+            # NEW: same per-machine mirror as topup_view, same reasoning -- no is_activated
+            # guard, missing License row never blocks the days credit above.
+            license_obj = License.objects.filter(license_key=machine.license_key).first()
+            if license_obj is not None:
+                License.objects.filter(pk=license_obj.pk).update(
+                    license_points=models.F("license_points") + days_added
+                )
+            else:
+                logger.warning(
+                    "bulk_topup_view: no License row found for license_key=%s -- days credited, "
+                    "license_points NOT credited.", machine.license_key,
+                )
+
             Transaction.objects.create(
                 machine=machine,
                 bundle_type=bundle_type,
@@ -813,6 +733,11 @@ def send_points_view(request):
     operator, identified by phone number. New build (not a bug fix) -- previously the only ways
     Account.balance_points ever moved were the admin's one-directional Gift Points action
     (superuser-only, no balance check) and a Machine top-up spend (single-account debit only).
+
+    WARNING (End Goal #23, MPD): this view must never import, query, or modify
+    machines.models.License or its license_points field -- now or in any future extension of this
+    view. License points are excluded from peer-to-peer transfer by design; see
+    accounts/models.py::PointTransfer's own docstring for the full rule.
     """
     if request.method == "GET":
         transfers = sorted(

@@ -10,9 +10,23 @@ class Command(BaseCommand):
     """
     Deletes any License row that has sat unclaimed (no Machine exists with a matching
     license_key) for UNCLAIMED_LICENSE_LIFETIME_DAYS PH-calendar-days or more, measured from its
-    created_at. "PH-calendar-days" (not exact elapsed hours) means age ticks over at PH midnight
-    -- see machines.models.calendar_days_since() for the exact logic, shared with the dashboard
+    created_at, AND has license_points == 0 (End Goal #19, added this task). "PH-calendar-days"
+    (not exact elapsed hours) means age ticks over at PH midnight -- see
+    machines.models.calendar_days_since() for the exact logic, shared with the dashboard
     countdown so both always agree on when a given License will actually be deleted.
+
+    THE license_points == 0 PRECONDITION (End Goal #19): a license that's unclaimed on the
+    dashboard but still holds a positive license_points balance is deliberately spared here --
+    those points represent real money an operator (or whoever funded it) already spent, and
+    deleting the row would destroy that value with no recovery path. Only a genuinely
+    zero-balance, unclaimed, aged-out license is actually deleted.
+
+    NO explicit "notify the box" step exists in this command, and none is needed: deletion
+    itself is the notification. A box still bound to a License row that gets deleted here
+    discovers this on its own next poll(s) via session_manager.sync_license_points() receiving a
+    404 from /api/box/license-points/ (End Goal #19's box-side half, requires two consecutive
+    404s before the box auto-unbinds -- see that function's own docstring for why). Nothing in
+    this command calls out to any box directly.
 
     This is a SEPARATE rule from STEP 2.7's zero-balance MACHINE cleanup
     (machines/management/commands/cleanup_zero_balance_machines.py, added the same task as
@@ -41,7 +55,8 @@ class Command(BaseCommand):
 
     help = (
         "Delete License rows that have been unclaimed for "
-        f"{UNCLAIMED_LICENSE_LIFETIME_DAYS}+ days. Run once daily via Railway Cron."
+        f"{UNCLAIMED_LICENSE_LIFETIME_DAYS}+ days and hold zero license_points. "
+        "Run once daily via Railway Cron."
     )
 
     def handle(self, *args, **options):
@@ -59,7 +74,11 @@ class Command(BaseCommand):
             # is_claimed is computed live from the Machine table (license_key string match, no
             # FK) -- re-checked here per-row rather than trusting a stale queryset, since a
             # Machine could claim this exact key between the query above and this loop.
-            if calendar_days_since(lic.created_at) >= UNCLAIMED_LICENSE_LIFETIME_DAYS and not lic.is_claimed:
+            if (
+                calendar_days_since(lic.created_at) >= UNCLAIMED_LICENSE_LIFETIME_DAYS
+                and not lic.is_claimed
+                and lic.license_points == 0
+            ):
                 lic.delete()
                 deleted_count += 1
 
