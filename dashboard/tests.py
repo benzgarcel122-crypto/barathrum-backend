@@ -242,6 +242,63 @@ class SendPointsTests(TestCase):
         self.assertContains(resp, "/send-points/")
 
 
+class LicensePointsExclusionTests(TestCase):
+    """
+    End Goal #23 guardrail: License.license_points must never be movable by send_points_view or
+    any other wallet-transfer path. Nothing in the current codebase lets this happen -- this class
+    exists so a future change can never quietly wire the two systems together without a loud,
+    immediate test failure. See accounts/models.py::PointTransfer and
+    dashboard/views.py::send_points_view for the accompanying warning docstrings.
+    """
+
+    def setUp(self):
+        self.acc1 = Account.objects.create_user(
+            phone_number="09171234567", display_name="Op One", balance_points=500
+        )
+        self.acc2 = Account.objects.create_user(
+            phone_number="09179876543", display_name="Op Two", balance_points=0
+        )
+
+    def test_wallet_transfer_never_touches_license_points(self):
+        lic = License.objects.create(account=self.acc1, license_points=50)
+        Machine.objects.create(owner=self.acc1, license_key=lic.license_key, nickname="Box A")
+        license_points_before = lic.license_points
+
+        self.client.force_login(self.acc1)
+        resp = self.client.post(
+            "/send-points/",
+            {"recipient_phone": "09179876543", "amount": "100", "note": "float"},
+        )
+        self.assertRedirects(resp, "/send-points/")
+
+        # The transfer itself worked normally...
+        self.acc1.refresh_from_db()
+        self.acc2.refresh_from_db()
+        self.assertEqual(self.acc1.balance_points, 400)
+        self.assertEqual(self.acc2.balance_points, 100)
+        transfer = PointTransfer.objects.get()
+        self.assertEqual(transfer.sender_id, self.acc1.id)
+        self.assertEqual(transfer.receiver_id, self.acc2.id)
+        self.assertEqual(transfer.amount, 100)
+
+        # ...and the license's own points balance is byte-identical to before the transfer.
+        lic.refresh_from_db()
+        self.assertEqual(lic.license_points, license_points_before)
+        self.assertEqual(lic.license_points, 50)
+
+    def test_point_transfer_model_has_no_license_relationship(self):
+        """Static/structural guarantee: fails immediately if a future migration ever adds an FK
+        (or any other field) from PointTransfer to License or Machine, which is the most likely
+        way this rule could get silently broken."""
+        for field in PointTransfer._meta.get_fields():
+            self.assertNotEqual(field.name, "license")
+            self.assertNotEqual(field.name, "machine")
+            related_model = getattr(field, "related_model", None)
+            if related_model is not None:
+                self.assertNotEqual(related_model.__name__, "License")
+                self.assertNotEqual(related_model.__name__, "Machine")
+
+
 class LicenseGenerationFeeTests(TestCase):
     """Anti-abuse fee on generate_license_view: LICENSE_GENERATION_FEE points deducted from the
     generating operator's own wallet balance, per this task's numbered test cases."""
