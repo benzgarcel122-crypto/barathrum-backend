@@ -10,9 +10,83 @@
 {% endblock %}
 {% block content %}
 
+<style>
+  /* Scoped to .landing-page only -- does not touch base.css or any other page's look. */
+  .landing-page { background: #0B0F17; }
+  .landing-page .app-shell { background: #0B0F17; }
+  .landing-page .topbar {
+    background: rgba(11, 15, 23, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .landing-page .topbar .brand { color: #F3F4F6; }
+  .landing-page .topbar .brand-sub { color: #10B981; }
+  .landing-page .topbar-actions .btn { color: #F3F4F6; }
+  .landing-page .topbar-actions .btn-secondary {
+    background: linear-gradient(90deg, #10B981, #06B6D4);
+    color: #05130f;
+    border: none;
+    font-weight: 600;
+  }
+  .landing-page .landing-main { color: #F3F4F6; }
+
+  .landing-page .landing-hero { align-items: center; }
+  .landing-page .landing-hero h1 { color: #ffffff; }
+  .landing-page .landing-hero h1 .gradient-text {
+    background: linear-gradient(90deg, #34D399, #22D3EE);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .landing-page .landing-hero-sub { color: #9CA3AF; }
+
+  .landing-page .landing-cta-row .btn-secondary {
+    background: linear-gradient(90deg, #10B981, #06B6D4);
+    color: #05130f;
+    border: none;
+    font-weight: 700;
+    box-shadow: 0 10px 30px -10px rgba(16, 185, 129, 0.45);
+  }
+  .landing-page .landing-cta-row .btn-secondary:hover {
+    box-shadow: 0 10px 40px -8px rgba(16, 185, 129, 0.6);
+  }
+
+  .landing-page .landing-logo-badge {
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 40px -10px rgba(16, 185, 129, 0.35);
+  }
+  .landing-page .landing-logo-wordmark { color: #F3F4F6; }
+  .landing-page .landing-logo-tagline { color: #10B981; }
+
+  .landing-page .landing-steps h2 { color: #ffffff; }
+  .landing-page .landing-step {
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: border-color 0.2s ease;
+  }
+  .landing-page .landing-step:hover { border-color: rgba(16, 185, 129, 0.4); }
+  .landing-page .landing-step h3 { color: #ffffff; }
+  .landing-page .landing-step .text-muted { color: #9CA3AF; }
+  .landing-page .landing-step-num {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34D399;
+  }
+
+  .landing-page .landing-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: #6B7280;
+  }
+  .landing-page .landing-footer a { color: #9CA3AF; }
+  .landing-page .landing-footer a:hover { color: #F3F4F6; }
+</style>
+
 <section class="landing-hero">
   <div class="landing-hero-text">
-    <h1>Run your pisowifi business from your phone.</h1>
+    <h1>Run your <span class="gradient-text">pisowifi business</span> from your phone.</h1>
     <p class="landing-hero-sub">
       Barathrum is coin/e-payment operated WiFi vending software for sari-sari-store-style
       pisowifi operators — manage licenses, top-ups, and machine status from one dashboard.
