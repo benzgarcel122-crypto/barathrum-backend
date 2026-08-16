@@ -25,6 +25,35 @@ class Session31LicenseDecoupleTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTemplateUsed(resp, "dashboard/landing.html")
 
+    def test_landing_page_topbar_has_no_dead_docs_or_pricing_links(self):
+        """
+        PM decision: a dead nav link (href="#", no real page behind it) reads worse than not
+        having the link yet. "Features" stays -- it's a real, working in-page anchor. "Docs"
+        and "Pricing" were removed until there's something real to link to.
+
+        Scoped to the topbar-actions markup specifically (not assertNotContains against the
+        whole response body), since a blind whole-page substring check for "Docs" or "Pricing"
+        could collide with unrelated content elsewhere on the page.
+        """
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+
+        start = body.index('<div class="topbar-actions">')
+        end = body.index("</div>", start)
+        topbar_actions_html = body[start:end]
+
+        self.assertIn("Features", topbar_actions_html)
+        self.assertIn('href="#how-it-works"', topbar_actions_html)
+        self.assertNotIn("Docs", topbar_actions_html)
+        self.assertNotIn("Pricing", topbar_actions_html)
+
+        from django.urls import reverse
+        self.assertIn(f'href="{reverse("login")}"', topbar_actions_html)
+        self.assertIn(f'href="{reverse("signup")}"', topbar_actions_html)
+        self.assertIn("Log In", topbar_actions_html)
+        self.assertIn("Sign Up", topbar_actions_html)
+
     def test_tc6_dashboard_home_for_logged_in(self):
         self.client.force_login(self.acc1)
         resp = self.client.get("/")
