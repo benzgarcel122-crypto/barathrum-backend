@@ -18,9 +18,10 @@
   .landing-page { background: #0B0F17; }
   .landing-page .app-shell { background: #0B0F17; }
   
-  /* Seamless topbar -- removed bottom border line to prevent clipping the smoke trail */
+  /* Seamless topbar -- soft dark gradient scrim behind it (not fully transparent) so the
+     wordmark/nav stay legible regardless of how bright the smoke layer gets underneath. */
   .landing-page .topbar {
-    background: transparent;
+    background: linear-gradient(180deg, rgba(11, 15, 23, 0.65), rgba(11, 15, 23, 0.2));
     backdrop-filter: blur(8px);
     border-bottom: none;
     position: relative;
@@ -71,6 +72,9 @@
     width: 100%;
     height: 100%;
     display: block;
+    /* Blurs the canvas output itself so overlapping particles merge into one continuous
+       haze instead of reading as separate glowing bubbles. */
+    filter: blur(18px);
   }
 
   /* Section layering above canvas */
@@ -331,13 +335,14 @@
       this.y = y !== undefined ? y : Math.random() * height;
 
       if (isLogoEmitter) {
-        // Originating directly from 'Barathrum Software' brand title
-        this.size = Math.random() * 50 + 35;
-        this.maxSize = this.size * (Math.random() * 3.0 + 2.2);
+        // Originating near the 'Barathrum Software' brand title -- deliberately smaller/dimmer
+        // than before (PM feedback: was washing out the wordmark it spawns next to).
+        this.size = Math.random() * 32 + 22;
+        this.maxSize = this.size * (Math.random() * 2.4 + 1.8);
         this.vx = Math.random() * 5.5 + 3.2; // Flow rightwards across screen
         this.vy = Math.random() * 1.8 + 0.4;  // Diagonal expansion into hero section
         this.maxLife = Math.random() * 120 + 80;
-        this.maxAlpha = Math.random() * 0.38 + 0.22;
+        this.maxAlpha = Math.random() * 0.16 + 0.09;
       } else if (isInteractive) {
         // Cursor-spawned smoke trail
         this.size = Math.random() * 70 + 40;
@@ -345,7 +350,7 @@
         this.vx = (Math.random() - 0.4) * 1.8;
         this.vy = (Math.random() - 0.5) * 1.2 - 0.2;
         this.maxLife = Math.random() * 100 + 60;
-        this.maxAlpha = Math.random() * 0.25 + 0.15;
+        this.maxAlpha = Math.random() * 0.18 + 0.1;
       } else {
         // Ambient background smoke
         this.size = Math.random() * 220 + 140;
@@ -353,7 +358,7 @@
         this.vx = (Math.random() - 0.3) * 0.7;
         this.vy = (Math.random() - 0.5) * 0.4 - 0.15;
         this.maxLife = Math.random() * 380 + 250;
-        this.maxAlpha = Math.random() * 0.16 + 0.06;
+        this.maxAlpha = Math.random() * 0.11 + 0.04;
       }
 
       this.life = 0;
