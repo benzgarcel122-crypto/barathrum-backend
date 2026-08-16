@@ -14,19 +14,24 @@
 {% block content %}
 
 <style>
-  /* Scoped to .landing-page only -- does not touch base.css or any other page's look. */
+  /* Scoped to .landing-page only */
   .landing-page { background: #0B0F17; }
   .landing-page .app-shell { background: #0B0F17; }
+  
+  /* Seamless topbar -- removed bottom border line to prevent clipping the smoke trail */
   .landing-page .topbar {
-    background: rgba(11, 15, 23, 0.85);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: transparent;
+    backdrop-filter: blur(8px);
+    border-bottom: none;
+    position: relative;
+    z-index: 2;
   }
   .landing-page .topbar .brand { 
     color: #F3F4F6; 
     position: relative;
     display: inline-flex;
     align-items: center;
+    z-index: 3;
   }
   .landing-page .topbar .brand-sub { color: #10B981; }
 
@@ -54,11 +59,11 @@
   }
   .landing-page .landing-main { color: #F3F4F6; }
 
-  /* Interactive Canvas Smoke Layer -- Barathrum Ethereal Charge Trail */
+  /* Interactive Canvas Smoke Layer */
   .landing-page .smoke-layer {
     position: fixed;
     inset: 0;
-    z-index: 0;
+    z-index: 1;
     pointer-events: none;
     overflow: hidden;
   }
@@ -68,11 +73,10 @@
     display: block;
   }
 
-  /* Content sits above the smoke canvas */
-  .landing-page .topbar,
+  /* Section layering above canvas */
   .landing-page .landing-hero,
   .landing-page .landing-steps,
-  .landing-page .landing-footer { position: relative; z-index: 1; }
+  .landing-page .landing-footer { position: relative; z-index: 2; }
 
   .landing-page .landing-hero { align-items: center; }
   .landing-page .landing-hero h1 { color: #ffffff; }
@@ -108,7 +112,7 @@
     background: rgba(255, 255, 255, 0.04);
   }
 
-  /* Tilted phone frame */
+  /* Phone frame visual */
   .landing-page .landing-hero-visual {
     display: flex;
     justify-content: center;
@@ -161,7 +165,7 @@
     .landing-page .phone-device { width: 260px; }
   }
 
-  /* How it works */
+  /* How it works section */
   .landing-page .landing-steps h2 { color: #ffffff; }
   .landing-page .landing-steps-grid { position: relative; }
   @media (min-width: 700px) {
@@ -269,7 +273,7 @@
   <span><a href="{% url 'login' %}">Log In</a> · <a href="{% url 'signup' %}">Sign Up</a></span>
 </footer>
 
-<!-- Interactive Barathrum Smoke Canvas Engine -->
+<!-- Interactive Barathrum Continuous Smoke Engine -->
 <script>
 (function() {
   const canvas = document.getElementById('smoke-canvas');
@@ -288,17 +292,17 @@
     height = canvas.height = window.innerHeight;
   });
 
-  // Pre-render soft smoke particle texture
+  // Pre-render procedural radial soft particle sprite
   const pCanvas = document.createElement('canvas');
-  const pRadius = 100;
+  const pRadius = 110;
   pCanvas.width = pRadius * 2;
   pCanvas.height = pRadius * 2;
   const pCtx = pCanvas.getContext('2d');
 
   const grad = pCtx.createRadialGradient(pRadius, pRadius, 0, pRadius, pRadius, pRadius);
-  grad.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
-  grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.4)');
-  grad.addColorStop(0.65, 'rgba(255, 255, 255, 0.08)');
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+  grad.addColorStop(0.25, 'rgba(255, 255, 255, 0.45)');
+  grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.1)');
   grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
   pCtx.fillStyle = grad;
@@ -306,7 +310,7 @@
   pCtx.arc(pRadius, pRadius, pRadius, 0, Math.PI * 2);
   pCtx.fill();
 
-  // Barathrum Ethereal Color Palette
+  // Barathrum Color Palette
   const colors = [
     { r: 37,  g: 99,  b: 235 }, // Spirit Blue
     { r: 29,  g: 78,  b: 216 }, // Deep Ethereal Indigo
@@ -315,27 +319,27 @@
   ];
 
   class Particle {
-    constructor(x, y, isFastStream = false, isInteractive = false) {
-      this.reset(x, y, isFastStream, isInteractive);
+    constructor(x, y, isLogoEmitter = false, isInteractive = false) {
+      this.reset(x, y, isLogoEmitter, isInteractive);
     }
 
-    reset(x, y, isFastStream = false, isInteractive = false) {
-      this.isFastStream = isFastStream;
+    reset(x, y, isLogoEmitter = false, isInteractive = false) {
+      this.isLogoEmitter = isLogoEmitter;
       this.isInteractive = isInteractive;
 
       this.x = x !== undefined ? x : Math.random() * width;
       this.y = y !== undefined ? y : Math.random() * height;
 
-      if (isFastStream) {
-        // High-velocity stream originating from the upper-left Barathrum logo
-        this.size = Math.random() * 60 + 40;
-        this.maxSize = this.size * (Math.random() * 2.5 + 2.0);
-        this.vx = Math.random() * 6 + 4; // Fast velocity pointing right across screen
-        this.vy = (Math.random() - 0.3) * 1.8; // Slight downward dispersion
-        this.maxLife = Math.random() * 100 + 70;
-        this.maxAlpha = Math.random() * 0.35 + 0.2;
+      if (isLogoEmitter) {
+        // Originating directly from 'Barathrum Software' brand title
+        this.size = Math.random() * 50 + 35;
+        this.maxSize = this.size * (Math.random() * 3.0 + 2.2);
+        this.vx = Math.random() * 5.5 + 3.2; // Flow rightwards across screen
+        this.vy = Math.random() * 1.8 + 0.4;  // Diagonal expansion into hero section
+        this.maxLife = Math.random() * 120 + 80;
+        this.maxAlpha = Math.random() * 0.38 + 0.22;
       } else if (isInteractive) {
-        // Cursor trail smoke
+        // Cursor-spawned smoke trail
         this.size = Math.random() * 70 + 40;
         this.maxSize = this.size * (Math.random() * 1.8 + 1.2);
         this.vx = (Math.random() - 0.4) * 1.8;
@@ -354,7 +358,7 @@
 
       this.life = 0;
       this.rotation = Math.random() * Math.PI * 2;
-      this.vRot = (Math.random() - 0.5) * (isFastStream ? 0.03 : 0.006);
+      this.vRot = (Math.random() - 0.5) * (isLogoEmitter ? 0.025 : 0.006);
       this.color = colors[Math.floor(Math.random() * colors.length)];
       this.alpha = 0;
     }
@@ -366,20 +370,20 @@
       this.rotation += this.vRot;
 
       if (this.size < this.maxSize) {
-        this.size += this.isFastStream ? 1.2 : 0.35;
+        this.size += this.isLogoEmitter ? 1.1 : 0.35;
       }
 
       const progress = this.life / this.maxLife;
-      if (progress < 0.15) {
-        this.alpha = (progress / 0.15) * this.maxAlpha;
-      } else if (progress > 0.55) {
-        this.alpha = (1 - (progress - 0.55) / 0.45) * this.maxAlpha;
+      if (progress < 0.1) {
+        this.alpha = (progress / 0.1) * this.maxAlpha;
+      } else if (progress > 0.5) {
+        this.alpha = (1 - (progress - 0.5) / 0.5) * this.maxAlpha;
       } else {
         this.alpha = this.maxAlpha;
       }
 
       if (this.life >= this.maxLife) {
-        if (this.isFastStream || this.isInteractive) {
+        if (this.isLogoEmitter || this.isInteractive) {
           return false;
         } else {
           this.reset(Math.random() * (width + 200) - 100, Math.random() * (height + 200) - 100, false, false);
@@ -408,12 +412,12 @@
 
   const particles = [];
 
-  // Ambient particles
+  // Ambient background particles
   for (let i = 0; i < 28; i++) {
     particles.push(new Particle(Math.random() * width, Math.random() * height, false, false));
   }
 
-  // Mouse trail interaction
+  // Mouse interaction
   let lastX = 0, lastY = 0;
   window.addEventListener('mousemove', (e) => {
     const dist = Math.hypot(e.clientX - lastX, e.clientY - lastY);
@@ -426,25 +430,28 @@
     }
   });
 
-  // Fast-flowing logo smoke emitter loop
+  // Continuous smoke emitter anchored to 'Barathrum Software' title
   function spawnLogoSmoke() {
-    // Dynamic calculation of upper left brand logo position
-    const brandElem = document.querySelector('.landing-page .topbar .brand');
-    let originX = 110;
-    let originY = 32;
+    const brandElem = document.querySelector('.landing-page .topbar .brand') || 
+                      document.querySelector('.brand') || 
+                      document.querySelector('a[href="#"]') || 
+                      document.querySelector('.topbar');
+    
+    let originX = 120;
+    let originY = 36;
 
     if (brandElem) {
       const rect = brandElem.getBoundingClientRect();
-      originX = rect.left + rect.width * 0.3;
-      originY = rect.top + rect.height * 0.5;
+      originX = rect.left + (rect.width * 0.2);
+      originY = rect.top + (rect.height * 0.5);
     }
 
-    // Continuously inject fast smoke particles emitting from the logo text
+    // Spawn smoke stream directly from logo text
     for (let i = 0; i < 2; i++) {
       particles.push(new Particle(
-        originX + (Math.random() - 0.5) * 30,
-        originY + (Math.random() - 0.5) * 14,
-        true, // isFastStream = true
+        originX + (Math.random() - 0.5) * 45,
+        originY + (Math.random() - 0.5) * 12,
+        true, // isLogoEmitter = true
         false
       ));
     }
