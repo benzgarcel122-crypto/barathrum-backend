@@ -22,7 +22,12 @@
     backdrop-filter: blur(12px);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .landing-page .topbar .brand { color: #F3F4F6; }
+  .landing-page .topbar .brand { 
+    color: #F3F4F6; 
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
   .landing-page .topbar .brand-sub { color: #10B981; }
 
   .landing-page .topbar-actions { gap: 22px; }
@@ -264,7 +269,7 @@
   <span><a href="{% url 'login' %}">Log In</a> · <a href="{% url 'signup' %}">Sign Up</a></span>
 </footer>
 
-<!-- Interactive Barathrum Smoke Particle Script -->
+<!-- Interactive Barathrum Smoke Canvas Engine -->
 <script>
 (function() {
   const canvas = document.getElementById('smoke-canvas');
@@ -283,17 +288,17 @@
     height = canvas.height = window.innerHeight;
   });
 
-  // Pre-render procedural soft smoke particle map for optimal canvas performance
+  // Pre-render soft smoke particle texture
   const pCanvas = document.createElement('canvas');
-  const pRadius = 120;
+  const pRadius = 100;
   pCanvas.width = pRadius * 2;
   pCanvas.height = pRadius * 2;
   const pCtx = pCanvas.getContext('2d');
 
   const grad = pCtx.createRadialGradient(pRadius, pRadius, 0, pRadius, pRadius, pRadius);
-  grad.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
-  grad.addColorStop(0.35, 'rgba(255, 255, 255, 0.3)');
-  grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.08)');
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+  grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.4)');
+  grad.addColorStop(0.65, 'rgba(255, 255, 255, 0.08)');
   grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
   pCtx.fillStyle = grad;
@@ -301,34 +306,57 @@
   pCtx.arc(pRadius, pRadius, pRadius, 0, Math.PI * 2);
   pCtx.fill();
 
-  // Barathrum Ethereal Color Palette (RGBs)
+  // Barathrum Ethereal Color Palette
   const colors = [
     { r: 37,  g: 99,  b: 235 }, // Spirit Blue
     { r: 29,  g: 78,  b: 216 }, // Deep Ethereal Indigo
     { r: 6,   g: 182, b: 212 }, // Charge Cyan
-    { r: 15,  g: 23,  b: 42  }  // Dark Void Smoke
+    { r: 59,  g: 130, b: 246 }  // Bright Charge Blue
   ];
 
   class Particle {
-    constructor(x, y, isInteractive = false) {
-      this.reset(x, y, isInteractive);
+    constructor(x, y, isFastStream = false, isInteractive = false) {
+      this.reset(x, y, isFastStream, isInteractive);
     }
 
-    reset(x, y, isInteractive = false) {
+    reset(x, y, isFastStream = false, isInteractive = false) {
+      this.isFastStream = isFastStream;
+      this.isInteractive = isInteractive;
+
       this.x = x !== undefined ? x : Math.random() * width;
       this.y = y !== undefined ? y : Math.random() * height;
-      this.size = isInteractive ? Math.random() * 80 + 60 : Math.random() * 250 + 150;
-      this.maxSize = this.size * (Math.random() * 1.8 + 1.2);
-      this.vx = (Math.random() - 0.4) * (isInteractive ? 1.5 : 0.6);
-      this.vy = (Math.random() - 0.5) * (isInteractive ? 1.2 : 0.4) - 0.2; // Slight upward drift
-      this.rotation = Math.random() * Math.PI * 2;
-      this.vRot = (Math.random() - 0.5) * 0.005;
-      this.color = colors[Math.floor(Math.random() * colors.length)];
+
+      if (isFastStream) {
+        // High-velocity stream originating from the upper-left Barathrum logo
+        this.size = Math.random() * 60 + 40;
+        this.maxSize = this.size * (Math.random() * 2.5 + 2.0);
+        this.vx = Math.random() * 6 + 4; // Fast velocity pointing right across screen
+        this.vy = (Math.random() - 0.3) * 1.8; // Slight downward dispersion
+        this.maxLife = Math.random() * 100 + 70;
+        this.maxAlpha = Math.random() * 0.35 + 0.2;
+      } else if (isInteractive) {
+        // Cursor trail smoke
+        this.size = Math.random() * 70 + 40;
+        this.maxSize = this.size * (Math.random() * 1.8 + 1.2);
+        this.vx = (Math.random() - 0.4) * 1.8;
+        this.vy = (Math.random() - 0.5) * 1.2 - 0.2;
+        this.maxLife = Math.random() * 100 + 60;
+        this.maxAlpha = Math.random() * 0.25 + 0.15;
+      } else {
+        // Ambient background smoke
+        this.size = Math.random() * 220 + 140;
+        this.maxSize = this.size * (Math.random() * 1.6 + 1.2);
+        this.vx = (Math.random() - 0.3) * 0.7;
+        this.vy = (Math.random() - 0.5) * 0.4 - 0.15;
+        this.maxLife = Math.random() * 380 + 250;
+        this.maxAlpha = Math.random() * 0.16 + 0.06;
+      }
+
       this.life = 0;
-      this.maxLife = isInteractive ? Math.random() * 120 + 80 : Math.random() * 400 + 300;
+      this.rotation = Math.random() * Math.PI * 2;
+      this.vRot = (Math.random() - 0.5) * (isFastStream ? 0.03 : 0.006);
+      this.color = colors[Math.floor(Math.random() * colors.length)];
       this.alpha = 0;
-      this.maxAlpha = isInteractive ? Math.random() * 0.25 + 0.15 : Math.random() * 0.18 + 0.08;
-      this.isInteractive = isInteractive;
     }
 
     update() {
@@ -337,26 +365,24 @@
       this.y += this.vy;
       this.rotation += this.vRot;
 
-      // Expand particle over life cycle
       if (this.size < this.maxSize) {
-        this.size += 0.3;
+        this.size += this.isFastStream ? 1.2 : 0.35;
       }
 
-      // Smooth Fade-In and Fade-Out curves
       const progress = this.life / this.maxLife;
-      if (progress < 0.2) {
-        this.alpha = (progress / 0.2) * this.maxAlpha;
-      } else if (progress > 0.6) {
-        this.alpha = (1 - (progress - 0.6) / 0.4) * this.maxAlpha;
+      if (progress < 0.15) {
+        this.alpha = (progress / 0.15) * this.maxAlpha;
+      } else if (progress > 0.55) {
+        this.alpha = (1 - (progress - 0.55) / 0.45) * this.maxAlpha;
       } else {
         this.alpha = this.maxAlpha;
       }
 
       if (this.life >= this.maxLife) {
-        if (this.isInteractive) {
-          return false; // Destroy cursor particles when dead
+        if (this.isFastStream || this.isInteractive) {
+          return false;
         } else {
-          this.reset(Math.random() * (width + 200) - 100, Math.random() * (height + 200) - 100);
+          this.reset(Math.random() * (width + 200) - 100, Math.random() * (height + 200) - 100, false, false);
         }
       }
       return true;
@@ -368,12 +394,10 @@
       ctx.translate(this.x, this.y);
       ctx.rotate(this.rotation);
 
-      // Tint particle texture with Barathrum colors
       ctx.globalCompositeOperation = 'screen';
       ctx.drawImage(pCanvas, -this.size / 2, -this.size / 2, this.size, this.size);
 
-      // Apply subtle color overlay
-      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.25)`;
+      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.28)`;
       ctx.beginPath();
       ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -382,34 +406,54 @@
     }
   }
 
-  // Ambient background smoke particles
   const particles = [];
-  const ambientCount = 35;
-  for (let i = 0; i < ambientCount; i++) {
-    particles.push(new Particle());
+
+  // Ambient particles
+  for (let i = 0; i < 28; i++) {
+    particles.push(new Particle(Math.random() * width, Math.random() * height, false, false));
   }
 
-  // Mouse interaction handling
-  let mouseX = 0, mouseY = 0;
+  // Mouse trail interaction
   let lastX = 0, lastY = 0;
-
   window.addEventListener('mousemove', (e) => {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-
-    const dist = Math.hypot(mouseX - lastX, mouseY - lastY);
-    if (dist > 15) { // Spawn smoke trail when moving cursor
+    const dist = Math.hypot(e.clientX - lastX, e.clientY - lastY);
+    if (dist > 16) {
       for (let i = 0; i < 2; i++) {
-        particles.push(new Particle(mouseX + (Math.random() - 0.5) * 20, mouseY + (Math.random() - 0.5) * 20, true));
+        particles.push(new Particle(e.clientX, e.clientY, false, true));
       }
-      lastX = mouseX;
-      lastY = mouseY;
+      lastX = e.clientX;
+      lastY = e.clientY;
     }
   });
 
-  // Main animation loop
+  // Fast-flowing logo smoke emitter loop
+  function spawnLogoSmoke() {
+    // Dynamic calculation of upper left brand logo position
+    const brandElem = document.querySelector('.landing-page .topbar .brand');
+    let originX = 110;
+    let originY = 32;
+
+    if (brandElem) {
+      const rect = brandElem.getBoundingClientRect();
+      originX = rect.left + rect.width * 0.3;
+      originY = rect.top + rect.height * 0.5;
+    }
+
+    // Continuously inject fast smoke particles emitting from the logo text
+    for (let i = 0; i < 2; i++) {
+      particles.push(new Particle(
+        originX + (Math.random() - 0.5) * 30,
+        originY + (Math.random() - 0.5) * 14,
+        true, // isFastStream = true
+        false
+      ));
+    }
+  }
+
   function animate() {
     ctx.clearRect(0, 0, width, height);
+
+    spawnLogoSmoke();
 
     for (let i = particles.length - 1; i >= 0; i--) {
       const alive = particles[i].update();
