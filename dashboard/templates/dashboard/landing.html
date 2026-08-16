@@ -18,11 +18,12 @@
   .landing-page { background: #0B0F17; }
   .landing-page .app-shell { background: #0B0F17; }
   
-  /* Seamless topbar -- soft dark gradient scrim behind it (not fully transparent) so the
-     wordmark/nav stay legible regardless of how bright the smoke layer gets underneath. */
+  /* Topbar itself is transparent now -- the .smoke-top-fade layer below (which extends well
+     past the topbar's own height) handles legibility contrast with a gradual fade instead of
+     a hard-edged background that stopped dead at the topbar's bottom border. */
   .landing-page .topbar {
-    background: linear-gradient(180deg, rgba(11, 15, 23, 0.65), rgba(11, 15, 23, 0.2));
-    backdrop-filter: blur(8px);
+    background: transparent;
+    backdrop-filter: blur(4px);
     border-bottom: none;
     position: relative;
     z-index: 2;
@@ -75,6 +76,26 @@
     /* Blurs the canvas output itself so overlapping particles merge into one continuous
        haze instead of reading as separate glowing bubbles. */
     filter: blur(18px);
+  }
+
+  /* Wide, gradual top vignette -- replaces the old topbar background, which stopped dead at
+     a fixed height and created a visible seam against the canvas right behind it. This fades
+     out gradually over ~340px, well past the topbar itself, so the transition into the smoke
+     layer reads as continuous instead of a hard line. Sits above the canvas (z-index 1, later
+     in DOM order so it paints on top) but below real content (z-index 2). */
+  .landing-page .smoke-top-fade {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 340px;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(11, 15, 23, 0.8) 0%,
+      rgba(11, 15, 23, 0.45) 35%,
+      rgba(11, 15, 23, 0.15) 65%,
+      rgba(11, 15, 23, 0) 100%
+    );
   }
 
   /* Section layering above canvas */
@@ -217,6 +238,7 @@
 <div class="smoke-layer" aria-hidden="true">
   <canvas id="smoke-canvas"></canvas>
 </div>
+<div class="smoke-top-fade" aria-hidden="true"></div>
 
 <section class="landing-hero">
   <div class="landing-hero-text">
@@ -342,7 +364,7 @@
         this.vx = Math.random() * 5.5 + 3.2; // Flow rightwards across screen
         this.vy = Math.random() * 1.8 + 0.4;  // Diagonal expansion into hero section
         this.maxLife = Math.random() * 120 + 80;
-        this.maxAlpha = Math.random() * 0.16 + 0.09;
+        this.maxAlpha = Math.random() * 0.173 + 0.097; // +8% over previous pass
       } else if (isInteractive) {
         // Cursor-spawned smoke trail
         this.size = Math.random() * 70 + 40;
@@ -350,7 +372,7 @@
         this.vx = (Math.random() - 0.4) * 1.8;
         this.vy = (Math.random() - 0.5) * 1.2 - 0.2;
         this.maxLife = Math.random() * 100 + 60;
-        this.maxAlpha = Math.random() * 0.18 + 0.1;
+        this.maxAlpha = Math.random() * 0.194 + 0.108; // +8% over previous pass
       } else {
         // Ambient background smoke
         this.size = Math.random() * 220 + 140;
@@ -358,7 +380,7 @@
         this.vx = (Math.random() - 0.3) * 0.7;
         this.vy = (Math.random() - 0.5) * 0.4 - 0.15;
         this.maxLife = Math.random() * 380 + 250;
-        this.maxAlpha = Math.random() * 0.11 + 0.04;
+        this.maxAlpha = Math.random() * 0.119 + 0.043; // +8% over previous pass
       }
 
       this.life = 0;
