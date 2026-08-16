@@ -49,85 +49,25 @@
   }
   .landing-page .landing-main { color: #F3F4F6; }
 
-  /* Ambient smoke layer -- a nod to Barathrum's Charge of Darkness trail. Pure CSS (no game
-     assets), a few large blurred blobs in blue/dark tones drifting slowly behind the content.
-     Fixed to the viewport so it's visible across the whole page, not just the hero; pointer-
-     events:none + negative z-index so it never blocks clicks or sits above real content. */
+  /* Interactive Canvas Smoke Layer -- Barathrum Ethereal Charge Trail */
   .landing-page .smoke-layer {
     position: fixed;
     inset: 0;
     z-index: 0;
-    overflow: hidden;
     pointer-events: none;
+    overflow: hidden;
   }
-  .landing-page .smoke-wisp {
-    position: absolute;
-    filter: blur(40px);
-    opacity: 0;
-    will-change: transform, opacity, border-radius;
+  #smoke-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
   }
-  .landing-page .smoke-wisp-1 {
-    width: 420px; height: 260px;
-    top: 5%; left: -30%;
-    background: radial-gradient(ellipse at 30% 40%, #3b82f6, transparent 65%);
-    animation: smoke-trail-1 16s ease-in infinite;
-  }
-  .landing-page .smoke-wisp-2 {
-    width: 360px; height: 220px;
-    top: 30%; left: -25%;
-    background: radial-gradient(ellipse at 40% 50%, #2563eb, transparent 65%);
-    animation: smoke-trail-2 20s ease-in infinite;
-    animation-delay: 4s;
-  }
-  .landing-page .smoke-wisp-3 {
-    width: 300px; height: 190px;
-    top: 55%; left: -20%;
-    background: radial-gradient(ellipse at 50% 50%, #1d4ed8, transparent 65%);
-    animation: smoke-trail-3 18s ease-in infinite;
-    animation-delay: 9s;
-  }
-  .landing-page .smoke-wisp-4 {
-    width: 260px; height: 170px;
-    top: 75%; left: -18%;
-    background: radial-gradient(ellipse at 45% 45%, #1e40af, transparent 65%);
-    animation: smoke-trail-1 17s ease-in infinite;
-    animation-delay: 12s;
-  }
-  /* Long horizontal travel (well beyond 100vw) so the motion reads as a drifting/charging
-     trail crossing the screen, not a blob breathing in place. border-radius morphs each
-     keyframe for an organic, non-circular "wisp" shape rather than a plain blurred disc. */
-  @keyframes smoke-trail-1 {
-    0%   { transform: translate(0, 0) scale(0.8) rotate(0deg); opacity: 0; border-radius: 50% 60% 55% 45% / 55% 45% 60% 50%; }
-    12%  { opacity: 0.5; }
-    50%  { transform: translate(70vw, -30px) scale(1.3) rotate(8deg); opacity: 0.45; border-radius: 60% 40% 50% 50% / 40% 60% 45% 55%; }
-    88%  { opacity: 0.15; }
-    100% { transform: translate(140vw, 20px) scale(1.6) rotate(-4deg); opacity: 0; border-radius: 45% 55% 60% 40% / 50% 50% 40% 60%; }
-  }
-  @keyframes smoke-trail-2 {
-    0%   { transform: translate(0, 0) scale(0.75) rotate(0deg); opacity: 0; border-radius: 55% 45% 50% 50% / 45% 55% 50% 50%; }
-    12%  { opacity: 0.45; }
-    50%  { transform: translate(75vw, 40px) scale(1.25) rotate(-6deg); opacity: 0.4; border-radius: 40% 60% 45% 55% / 55% 45% 60% 40%; }
-    88%  { opacity: 0.12; }
-    100% { transform: translate(150vw, -25px) scale(1.5) rotate(5deg); opacity: 0; border-radius: 50% 50% 40% 60% / 60% 40% 55% 45%; }
-  }
-  @keyframes smoke-trail-3 {
-    0%   { transform: translate(0, 0) scale(0.7) rotate(0deg); opacity: 0; border-radius: 45% 55% 60% 40% / 50% 60% 40% 50%; }
-    12%  { opacity: 0.4; }
-    50%  { transform: translate(65vw, -20px) scale(1.2) rotate(7deg); opacity: 0.35; border-radius: 60% 40% 45% 55% / 45% 55% 50% 50%; }
-    88%  { opacity: 0.1; }
-    100% { transform: translate(130vw, 30px) scale(1.4) rotate(-6deg); opacity: 0; border-radius: 50% 50% 55% 45% / 55% 45% 60% 40%; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .landing-page .smoke-wisp { animation: none; opacity: 0.25; }
-  }
-  /* Content needs to sit above the fixed smoke layer -- scoped to the actual content
-     sections (not `> *`, which would also match .smoke-layer itself and flip its
-     position from fixed to relative, collapsing it to zero height). */
+
+  /* Content sits above the smoke canvas */
   .landing-page .topbar,
   .landing-page .landing-hero,
   .landing-page .landing-steps,
   .landing-page .landing-footer { position: relative; z-index: 1; }
-
 
   .landing-page .landing-hero { align-items: center; }
   .landing-page .landing-hero h1 { color: #ffffff; }
@@ -139,7 +79,7 @@
   }
   .landing-page .landing-hero-sub { color: #9CA3AF; }
 
-  /* Primary CTA: solid gradient, matches the reference's "Generate a License Key" button */
+  /* Primary CTA */
   .landing-page .landing-cta-row .btn-primary {
     background: linear-gradient(90deg, #10B981, #06B6D4);
     color: #05130f;
@@ -150,7 +90,8 @@
   .landing-page .landing-cta-row .btn-primary:hover {
     box-shadow: 0 10px 40px -8px rgba(16, 185, 129, 0.6);
   }
-  /* Secondary CTA: outlined, matches the reference's "Download Box Software" button */
+
+  /* Secondary CTA */
   .landing-page .landing-cta-row .btn-outline {
     background: transparent;
     color: #F3F4F6;
@@ -162,10 +103,7 @@
     background: rgba(255, 255, 255, 0.04);
   }
 
-  /* Tilted phone frame showing the REAL customer-facing coin-insert portal
-     (barathrum-box-agent's portal.html) -- side-view perspective, not a flat card.
-     This is what a customer sees on their own phone when they connect to the pisowifi's
-     captive portal, not a dashboard mockup. */
+  /* Tilted phone frame */
   .landing-page .landing-hero-visual {
     display: flex;
     justify-content: center;
@@ -218,7 +156,7 @@
     .landing-page .phone-device { width: 260px; }
   }
 
-  /* How it works -- connected steps with icons and a highlighted first card */
+  /* How it works */
   .landing-page .landing-steps h2 { color: #ffffff; }
   .landing-page .landing-steps-grid { position: relative; }
   @media (min-width: 700px) {
@@ -262,11 +200,9 @@
   .landing-page .landing-footer a:hover { color: #F3F4F6; }
 </style>
 
+<!-- Smoke Layer Container -->
 <div class="smoke-layer" aria-hidden="true">
-  <div class="smoke-wisp smoke-wisp-1"></div>
-  <div class="smoke-wisp smoke-wisp-2"></div>
-  <div class="smoke-wisp smoke-wisp-3"></div>
-  <div class="smoke-wisp smoke-wisp-4"></div>
+  <canvas id="smoke-canvas"></canvas>
 </div>
 
 <section class="landing-hero">
@@ -327,5 +263,168 @@
   <span>&copy; Barathrum</span>
   <span><a href="{% url 'login' %}">Log In</a> · <a href="{% url 'signup' %}">Sign Up</a></span>
 </footer>
+
+<!-- Interactive Barathrum Smoke Particle Script -->
+<script>
+(function() {
+  const canvas = document.getElementById('smoke-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return;
+  }
+
+  let width = canvas.width = window.innerWidth;
+  let height = canvas.height = window.innerHeight;
+
+  window.addEventListener('resize', () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+  });
+
+  // Pre-render procedural soft smoke particle map for optimal canvas performance
+  const pCanvas = document.createElement('canvas');
+  const pRadius = 120;
+  pCanvas.width = pRadius * 2;
+  pCanvas.height = pRadius * 2;
+  const pCtx = pCanvas.getContext('2d');
+
+  const grad = pCtx.createRadialGradient(pRadius, pRadius, 0, pRadius, pRadius, pRadius);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+  grad.addColorStop(0.35, 'rgba(255, 255, 255, 0.3)');
+  grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.08)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+  pCtx.fillStyle = grad;
+  pCtx.beginPath();
+  pCtx.arc(pRadius, pRadius, pRadius, 0, Math.PI * 2);
+  pCtx.fill();
+
+  // Barathrum Ethereal Color Palette (RGBs)
+  const colors = [
+    { r: 37,  g: 99,  b: 235 }, // Spirit Blue
+    { r: 29,  g: 78,  b: 216 }, // Deep Ethereal Indigo
+    { r: 6,   g: 182, b: 212 }, // Charge Cyan
+    { r: 15,  g: 23,  b: 42  }  // Dark Void Smoke
+  ];
+
+  class Particle {
+    constructor(x, y, isInteractive = false) {
+      this.reset(x, y, isInteractive);
+    }
+
+    reset(x, y, isInteractive = false) {
+      this.x = x !== undefined ? x : Math.random() * width;
+      this.y = y !== undefined ? y : Math.random() * height;
+      this.size = isInteractive ? Math.random() * 80 + 60 : Math.random() * 250 + 150;
+      this.maxSize = this.size * (Math.random() * 1.8 + 1.2);
+      this.vx = (Math.random() - 0.4) * (isInteractive ? 1.5 : 0.6);
+      this.vy = (Math.random() - 0.5) * (isInteractive ? 1.2 : 0.4) - 0.2; // Slight upward drift
+      this.rotation = Math.random() * Math.PI * 2;
+      this.vRot = (Math.random() - 0.5) * 0.005;
+      this.color = colors[Math.floor(Math.random() * colors.length)];
+      this.life = 0;
+      this.maxLife = isInteractive ? Math.random() * 120 + 80 : Math.random() * 400 + 300;
+      this.alpha = 0;
+      this.maxAlpha = isInteractive ? Math.random() * 0.25 + 0.15 : Math.random() * 0.18 + 0.08;
+      this.isInteractive = isInteractive;
+    }
+
+    update() {
+      this.life++;
+      this.x += this.vx;
+      this.y += this.vy;
+      this.rotation += this.vRot;
+
+      // Expand particle over life cycle
+      if (this.size < this.maxSize) {
+        this.size += 0.3;
+      }
+
+      // Smooth Fade-In and Fade-Out curves
+      const progress = this.life / this.maxLife;
+      if (progress < 0.2) {
+        this.alpha = (progress / 0.2) * this.maxAlpha;
+      } else if (progress > 0.6) {
+        this.alpha = (1 - (progress - 0.6) / 0.4) * this.maxAlpha;
+      } else {
+        this.alpha = this.maxAlpha;
+      }
+
+      if (this.life >= this.maxLife) {
+        if (this.isInteractive) {
+          return false; // Destroy cursor particles when dead
+        } else {
+          this.reset(Math.random() * (width + 200) - 100, Math.random() * (height + 200) - 100);
+        }
+      }
+      return true;
+    }
+
+    draw() {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, this.alpha);
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.rotation);
+
+      // Tint particle texture with Barathrum colors
+      ctx.globalCompositeOperation = 'screen';
+      ctx.drawImage(pCanvas, -this.size / 2, -this.size / 2, this.size, this.size);
+
+      // Apply subtle color overlay
+      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.25)`;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }
+
+  // Ambient background smoke particles
+  const particles = [];
+  const ambientCount = 35;
+  for (let i = 0; i < ambientCount; i++) {
+    particles.push(new Particle());
+  }
+
+  // Mouse interaction handling
+  let mouseX = 0, mouseY = 0;
+  let lastX = 0, lastY = 0;
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+
+    const dist = Math.hypot(mouseX - lastX, mouseY - lastY);
+    if (dist > 15) { // Spawn smoke trail when moving cursor
+      for (let i = 0; i < 2; i++) {
+        particles.push(new Particle(mouseX + (Math.random() - 0.5) * 20, mouseY + (Math.random() - 0.5) * 20, true));
+      }
+      lastX = mouseX;
+      lastY = mouseY;
+    }
+  });
+
+  // Main animation loop
+  function animate() {
+    ctx.clearRect(0, 0, width, height);
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const alive = particles[i].update();
+      if (!alive) {
+        particles.splice(i, 1);
+      } else {
+        particles[i].draw();
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  animate();
+})();
+</script>
 
 {% endblock %}
