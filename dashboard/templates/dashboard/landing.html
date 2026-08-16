@@ -75,7 +75,7 @@
     display: block;
     /* Blurs the canvas output itself so overlapping particles merge into one continuous
        haze instead of reading as separate glowing bubbles. */
-    filter: blur(18px);
+    filter: blur(12px);
   }
 
   /* Wide, gradual top vignette -- replaces the old topbar background, which stopped dead at
@@ -326,9 +326,11 @@
   const pCtx = pCanvas.getContext('2d');
 
   const grad = pCtx.createRadialGradient(pRadius, pRadius, 0, pRadius, pRadius, pRadius);
-  grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-  grad.addColorStop(0.25, 'rgba(255, 255, 255, 0.45)');
-  grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.1)');
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+  grad.addColorStop(0.2, 'rgba(255, 255, 255, 0.6)');
+  grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.32)');
+  grad.addColorStop(0.65, 'rgba(255, 255, 255, 0.14)');
+  grad.addColorStop(0.85, 'rgba(255, 255, 255, 0.04)');
   grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
   pCtx.fillStyle = grad;
@@ -336,12 +338,16 @@
   pCtx.arc(pRadius, pRadius, pRadius, 0, Math.PI * 2);
   pCtx.fill();
 
-  // Barathrum Color Palette
+  // Barathrum Color Palette -- mixes deeper tones with lighter ones so the smoke reads as a
+  // gradient of light instead of one flat dark-blue haze.
   const colors = [
     { r: 37,  g: 99,  b: 235 }, // Spirit Blue
     { r: 29,  g: 78,  b: 216 }, // Deep Ethereal Indigo
     { r: 6,   g: 182, b: 212 }, // Charge Cyan
-    { r: 59,  g: 130, b: 246 }  // Bright Charge Blue
+    { r: 59,  g: 130, b: 246 }, // Bright Charge Blue
+    { r: 56,  g: 189, b: 248 }, // Light Sky Cyan
+    { r: 147, g: 197, b: 253 }, // Pale Blue
+    { r: 191, g: 219, b: 254 }  // Near-white Blue Highlight
   ];
 
   class Particle {
@@ -364,7 +370,7 @@
         this.vx = Math.random() * 5.5 + 3.2; // Flow rightwards across screen
         this.vy = Math.random() * 1.8 + 0.4;  // Diagonal expansion into hero section
         this.maxLife = Math.random() * 120 + 80;
-        this.maxAlpha = Math.random() * 0.173 + 0.097; // +8% over previous pass
+        this.maxAlpha = Math.random() * 0.35 + 0.2;
       } else if (isInteractive) {
         // Cursor-spawned smoke trail
         this.size = Math.random() * 70 + 40;
@@ -372,7 +378,7 @@
         this.vx = (Math.random() - 0.4) * 1.8;
         this.vy = (Math.random() - 0.5) * 1.2 - 0.2;
         this.maxLife = Math.random() * 100 + 60;
-        this.maxAlpha = Math.random() * 0.194 + 0.108; // +8% over previous pass
+        this.maxAlpha = Math.random() * 0.38 + 0.22;
       } else {
         // Ambient background smoke
         this.size = Math.random() * 220 + 140;
@@ -380,7 +386,7 @@
         this.vx = (Math.random() - 0.3) * 0.7;
         this.vy = (Math.random() - 0.5) * 0.4 - 0.15;
         this.maxLife = Math.random() * 380 + 250;
-        this.maxAlpha = Math.random() * 0.119 + 0.043; // +8% over previous pass
+        this.maxAlpha = Math.random() * 0.26 + 0.11;
       }
 
       this.life = 0;
@@ -428,7 +434,7 @@
       ctx.globalCompositeOperation = 'screen';
       ctx.drawImage(pCanvas, -this.size / 2, -this.size / 2, this.size, this.size);
 
-      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.28)`;
+      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.5)`;
       ctx.beginPath();
       ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -440,7 +446,7 @@
   const particles = [];
 
   // Ambient background particles
-  for (let i = 0; i < 28; i++) {
+  for (let i = 0; i < 42; i++) {
     particles.push(new Particle(Math.random() * width, Math.random() * height, false, false));
   }
 
