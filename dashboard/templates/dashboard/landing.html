@@ -18,7 +18,7 @@
   .landing-page { background: #0B0F17; }
   .landing-page .app-shell { background: #0B0F17; }
   
-  /* Seamless topbar -- removed bottom border line to prevent clipping the smoke trail */
+  /* Seamless topbar */
   .landing-page .topbar {
     background: transparent;
     backdrop-filter: blur(8px);
@@ -273,7 +273,7 @@
   <span><a href="{% url 'login' %}">Log In</a> · <a href="{% url 'signup' %}">Sign Up</a></span>
 </footer>
 
-<!-- Interactive Barathrum Continuous Smoke Engine -->
+<!-- Interactive Barathrum Darkened Smoke Engine -->
 <script>
 (function() {
   const canvas = document.getElementById('smoke-canvas');
@@ -292,7 +292,7 @@
     height = canvas.height = window.innerHeight;
   });
 
-  // Pre-render procedural radial soft particle sprite
+  // Pre-render procedural radial soft particle sprite with reduced center core white intensity
   const pCanvas = document.createElement('canvas');
   const pRadius = 110;
   pCanvas.width = pRadius * 2;
@@ -300,9 +300,9 @@
   const pCtx = pCanvas.getContext('2d');
 
   const grad = pCtx.createRadialGradient(pRadius, pRadius, 0, pRadius, pRadius, pRadius);
-  grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-  grad.addColorStop(0.25, 'rgba(255, 255, 255, 0.45)');
-  grad.addColorStop(0.6, 'rgba(255, 255, 255, 0.1)');
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
+  grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.12)');
+  grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.03)');
   grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
   pCtx.fillStyle = grad;
@@ -310,12 +310,12 @@
   pCtx.arc(pRadius, pRadius, pRadius, 0, Math.PI * 2);
   pCtx.fill();
 
-  // Barathrum Color Palette
+  // Darker, subtler Barathrum Color Palette
   const colors = [
-    { r: 37,  g: 99,  b: 235 }, // Spirit Blue
-    { r: 29,  g: 78,  b: 216 }, // Deep Ethereal Indigo
-    { r: 6,   g: 182, b: 212 }, // Charge Cyan
-    { r: 59,  g: 130, b: 246 }  // Bright Charge Blue
+    { r: 24,  g: 68,  b: 160 }, // Dark Spirit Blue
+    { r: 18,  g: 48,  b: 135 }, // Deep Shadow Blue
+    { r: 8,   g: 110, b: 130 }, // Muted Cyan Shadow
+    { r: 30,  g: 80,  b: 150 }  // Deep Ethereal Blue
   ];
 
   class Particle {
@@ -332,12 +332,12 @@
 
       if (isLogoEmitter) {
         // Originating directly from 'Barathrum Software' brand title
-        this.size = Math.random() * 50 + 35;
-        this.maxSize = this.size * (Math.random() * 3.0 + 2.2);
-        this.vx = Math.random() * 5.5 + 3.2; // Flow rightwards across screen
-        this.vy = Math.random() * 1.8 + 0.4;  // Diagonal expansion into hero section
-        this.maxLife = Math.random() * 120 + 80;
-        this.maxAlpha = Math.random() * 0.38 + 0.22;
+        this.size = Math.random() * 60 + 40;
+        this.maxSize = this.size * (Math.random() * 2.5 + 1.8);
+        this.vx = Math.random() * 5.0 + 3.0; // Flow rightwards across screen
+        this.vy = Math.random() * 1.5 + 0.3; 
+        this.maxLife = Math.random() * 110 + 70;
+        this.maxAlpha = Math.random() * 0.18 + 0.08; // Lowered opacity to avoid overpowering
       } else if (isInteractive) {
         // Cursor-spawned smoke trail
         this.size = Math.random() * 70 + 40;
@@ -345,7 +345,7 @@
         this.vx = (Math.random() - 0.4) * 1.8;
         this.vy = (Math.random() - 0.5) * 1.2 - 0.2;
         this.maxLife = Math.random() * 100 + 60;
-        this.maxAlpha = Math.random() * 0.25 + 0.15;
+        this.maxAlpha = Math.random() * 0.15 + 0.06;
       } else {
         // Ambient background smoke
         this.size = Math.random() * 220 + 140;
@@ -353,7 +353,7 @@
         this.vx = (Math.random() - 0.3) * 0.7;
         this.vy = (Math.random() - 0.5) * 0.4 - 0.15;
         this.maxLife = Math.random() * 380 + 250;
-        this.maxAlpha = Math.random() * 0.16 + 0.06;
+        this.maxAlpha = Math.random() * 0.08 + 0.03;
       }
 
       this.life = 0;
@@ -370,12 +370,12 @@
       this.rotation += this.vRot;
 
       if (this.size < this.maxSize) {
-        this.size += this.isLogoEmitter ? 1.1 : 0.35;
+        this.size += this.isLogoEmitter ? 0.9 : 0.35;
       }
 
       const progress = this.life / this.maxLife;
-      if (progress < 0.1) {
-        this.alpha = (progress / 0.1) * this.maxAlpha;
+      if (progress < 0.12) {
+        this.alpha = (progress / 0.12) * this.maxAlpha;
       } else if (progress > 0.5) {
         this.alpha = (1 - (progress - 0.5) / 0.5) * this.maxAlpha;
       } else {
@@ -398,10 +398,11 @@
       ctx.translate(this.x, this.y);
       ctx.rotate(this.rotation);
 
-      ctx.globalCompositeOperation = 'screen';
+      // Using normal blend mode to keep colors soft and avoid white blown-out hotspots
+      ctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(pCanvas, -this.size / 2, -this.size / 2, this.size, this.size);
 
-      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.28)`;
+      ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.2)`;
       ctx.beginPath();
       ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
       ctx.fill();
@@ -413,7 +414,7 @@
   const particles = [];
 
   // Ambient background particles
-  for (let i = 0; i < 28; i++) {
+  for (let i = 0; i < 22; i++) {
     particles.push(new Particle(Math.random() * width, Math.random() * height, false, false));
   }
 
@@ -421,8 +422,8 @@
   let lastX = 0, lastY = 0;
   window.addEventListener('mousemove', (e) => {
     const dist = Math.hypot(e.clientX - lastX, e.clientY - lastY);
-    if (dist > 16) {
-      for (let i = 0; i < 2; i++) {
+    if (dist > 20) {
+      for (let i = 0; i < 1; i++) {
         particles.push(new Particle(e.clientX, e.clientY, false, true));
       }
       lastX = e.clientX;
@@ -433,9 +434,7 @@
   // Continuous smoke emitter anchored to 'Barathrum Software' title
   function spawnLogoSmoke() {
     const brandElem = document.querySelector('.landing-page .topbar .brand') || 
-                      document.querySelector('.brand') || 
-                      document.querySelector('a[href="#"]') || 
-                      document.querySelector('.topbar');
+                      document.querySelector('.brand');
     
     let originX = 120;
     let originY = 36;
@@ -446,8 +445,8 @@
       originY = rect.top + (rect.height * 0.5);
     }
 
-    // Spawn smoke stream directly from logo text
-    for (let i = 0; i < 2; i++) {
+    // Spawn subtle dark smoke stream directly from logo text
+    if (Math.random() < 0.75) {
       particles.push(new Particle(
         originX + (Math.random() - 0.5) * 45,
         originY + (Math.random() - 0.5) * 12,
